@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { fetchChatHistoryForUser, saveChatTurn } from '../services/chatHistoryService'
 import { sendChatMessage } from '../services/aiService'
-import { fetchWeather, type WeatherSnapshot } from '../services/weatherService'
+import { fetchBestWeather, type WeatherSnapshot } from '../services/weatherService'
 import type { ChatHistoryRecord } from '../types/models'
 import type { ChatMessage } from '../types'
 
@@ -32,64 +32,26 @@ function detectMessageLang(text: string, fallback: 'en' | 'hi' | 'mr'): 'en' | '
   const devanagariChars = text.match(/[\u0900-\u097F]/g)?.length ?? 0
   const totalLetters = text.match(/[A-Za-z\u0900-\u097F]/g)?.length ?? 0
 
-  if (devanagariChars > 0 && devanagariChars / Math.max(totalLetters, 1) > 0.35) {
+  if (devanagariChars > 0 && devanagariChars / Math.max(totalLetters, 1) > 0.25) {
     const marathiWords = [
-      'माझ्या',
-      'माझा',
-      'माझी',
-      'माझे',
-      'मला',
-      'आहे',
-      'आहेत',
-      'काय',
-      'करू',
-      'करायचं',
-      'पिकाला',
-      'झाडाला',
-      'पाणी',
-      'द्या',
-      'दिसत',
-      'पिवळे',
-      'डाग',
-      'मराठी',
-      'टोमॅटो',
-      'भाजीपाला',
-      'शेत',
-      'खत',
-      'किड',
-      'रोग',
+      'माझ्या', 'माझा', 'माझी', 'माझे', 'मला', 'आहे', 'आहेत', 'काय', 'करू',
+      'करायचं', 'पिकाला', 'झाडाला', 'पाणी', 'द्या', 'दिसत', 'पिवळे', 'डाग',
+      'मराठी', 'टोमॅटो', 'भाजीपाला', 'शेत', 'खत', 'किड', 'रोग',
     ]
 
     const hindiWords = [
-      'मेरे',
-      'मेरा',
-      'मेरी',
-      'मुझे',
-      'है',
-      'हैं',
-      'क्या',
-      'करूं',
-      'करना',
-      'फसल',
-      'पौधे',
-      'पानी',
-      'देना',
-      'दिख',
-      'पीले',
-      'दाग',
-      'हिंदी',
-      'टमाटर',
-      'सब्जी',
-      'खेत',
-      'खाद',
-      'कीट',
-      'रोग',
+      'मेरे', 'मेरा', 'मेरी', 'मुझे', 'है', 'हैं', 'क्या', 'करूं', 'करना',
+      'फसल', 'पौधे', 'पानी', 'देना', 'दिख', 'पीले', 'दाग', 'हिंदी',
+      'टमाटर', 'सब्जी', 'खेत', 'खाद', 'कीट', 'रोग',
     ]
 
     const mrScore = marathiWords.filter((w) => text.includes(w)).length
     const hiScore = hindiWords.filter((w) => text.includes(w)).length
 
-    return mrScore >= hiScore ? 'mr' : 'hi'
+    if (mrScore > hiScore) return 'mr'
+    if (hiScore > mrScore) return 'hi'
+
+    return fallback
   }
 
   return fallback
@@ -113,24 +75,14 @@ function recordsToMessages(records: ChatHistoryRecord[]): ChatMessage[] {
 function weatherLine(w: WeatherSnapshot): string {
   return `Current weather near farmer: ${w.place}, ${w.tempC}°C, ${w.condition}, humidity ${w.humidity}%, rain chance ${w.rainChance}%.`
 }
-// function speakText(text: string, lang: 'en' | 'hi' | 'mr') {
-//   if (!('speechSynthesis' in window)) return
 
-//   window.speechSynthesis.cancel()
-
-//   const utterance = new SpeechSynthesisUtterance(text)
-//   utterance.lang = voiceLangMap[lang]
-//   utterance.rate = 0.95
-//   utterance.pitch = 1
-//   utterance.volume = 1
-
-//   window.speechSynthesis.speak(utterance)
-// }
 export function AIScreen() {
   const { user, profile } = useAuth()
   const inputId = useId()
   const scrollRef = useRef<HTMLDivElement>(null)
   const langCode = normaliseLang(profile?.preferredLanguage)
+  const sessionIdRef = useRef<string | undefined>(undefined)
+  const lastVoiceTranscriptRef = useRef('')
 
   const welcome: ChatMessage = useMemo(
     () => ({ id: 'welcome', role: 'assistant', lang: 'KrishiMitra', text: welcomeByLanguage[langCode] }),
@@ -143,34 +95,137 @@ export function AIScreen() {
   const [speaking, setSpeaking] = useState(false)
   const [text, setText] = useState('')
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null)
-  const sessionIdRef = useRef<string | undefined>(undefined)
 
   const voice = useSpeechRecognition(voiceLangMap[langCode])
-
   const canSend = useMemo(() => text.trim().length > 0 && !sending, [text, sending])
 
+  const scrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+    })
+  }, [])
+  function cleanForVoice(value: string): string {
+  return value
+    .replace(/\*\*/g, '')
+    .replace(/[*•#_`~>-]/g, ' ')
+    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+    .replace(/\n+/g, '. ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  }
+
+  const speakText = useCallback((replyText: string, lang: 'en' | 'hi' | 'mr') => {
+    if (!('speechSynthesis' in window)) return
+
+    window.speechSynthesis.cancel()
+
+    const utterance = new SpeechSynthesisUtterance(cleanForVoice(replyText))
+    utterance.lang = voiceLangMap[lang]
+    utterance.rate = 0.95
+    utterance.pitch = 1
+    utterance.volume = 1
+
+    utterance.onstart = () => setSpeaking(true)
+    utterance.onend = () => setSpeaking(false)
+    utterance.onerror = () => setSpeaking(false)
+
+    window.speechSynthesis.speak(utterance)
+  }, [])
+
+  const sendMessage = useCallback(
+    async (rawText?: string) => {
+      const t = (rawText ?? text).trim()
+      if (!t || !user || sending) return
+
+      const messageLang = detectMessageLang(t, langCode)
+
+      const userMsg: ChatMessage = {
+        id: `u-${Date.now()}`,
+        role: 'user',
+        lang: languageLabel(messageLang),
+        text: t,
+      }
+
+      setMessages((prev) => [...prev, userMsg])
+      setText('')
+      setSending(true)
+      scrollToBottom()
+
+      try {
+        const currentHistory = [...messages.slice(-6), userMsg].map((m) => ({
+          role: m.role,
+          content: m.text,
+        }))
+
+        const contextPrefix = weather ? `${weatherLine(weather)}\n` : ''
+        const enrichedMessage = contextPrefix ? `${contextPrefix}\n${t}` : t
+
+        const res = await sendChatMessage({
+          message: enrichedMessage,
+          language: messageLang,
+          sessionId: sessionIdRef.current,
+          history: currentHistory.slice(0, -1),
+        })
+
+        sessionIdRef.current = res.sessionId
+
+        const assistantMsg: ChatMessage = {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          lang: 'KrishiMitra',
+          text: res.reply,
+        }
+
+        setMessages((prev) => [...prev, assistantMsg])
+        scrollToBottom()
+        speakText(res.reply, messageLang)
+
+        void saveChatTurn({
+          userId: user.uid,
+          userMessage: t,
+          aiResponse: res.reply,
+          language: messageLang,
+        }).catch((e) => import.meta.env.DEV && console.error('[AIScreen] saveChatTurn', e))
+      } finally {
+        setSending(false)
+      }
+    },
+    [text, user, sending, langCode, messages, scrollToBottom, weather, speakText],
+  )
+
   useEffect(() => {
-    void fetchWeather().then(setWeather).catch(() => setWeather(null))
+    void fetchBestWeather().then(setWeather).catch(() => setWeather(null))
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    }
   }, [])
 
   useEffect(() => {
     if (!voice.transcript) return
-    setText((prev) => {
-      const merged = prev.trim() ? `${prev.trim()} ${voice.transcript}` : voice.transcript
-      return merged.trim()
-    })
+
+    const finalText = voice.transcript.trim()
+    if (!finalText || finalText === lastVoiceTranscriptRef.current) return
+
+    lastVoiceTranscriptRef.current = finalText
+    setText(finalText)
   }, [voice.transcript])
 
   useEffect(() => {
-    return () => {
-     if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel()
-     }
+    const finalText = voice.transcript.trim()
+    if (voice.status === 'idle' && finalText && !sending) {
+      void sendMessage(finalText)
+      voice.reset()
+      lastVoiceTranscriptRef.current = ''
     }
-  }, [])
+  }, [voice.status, voice.transcript, sending, sendMessage, voice])
+
   const loadHistory = useCallback(async () => {
     if (!user) return
     setHistoryLoading(true)
+
     try {
       const rows = await fetchChatHistoryForUser(user.uid)
       const fromDb = recordsToMessages(rows)
@@ -187,102 +242,23 @@ export function AIScreen() {
     void loadHistory()
   }, [loadHistory])
 
-  const scrollToBottom = useCallback(() => {
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-    })
-  }, [])
-  const speakText = useCallback((text: string, lang: 'en' | 'hi' | 'mr') => {
-  if (!('speechSynthesis' in window)) return
-
-  window.speechSynthesis.cancel()
-
-  const utterance = new SpeechSynthesisUtterance(text)
-  utterance.lang = voiceLangMap[lang]
-  utterance.rate = 0.95
-  utterance.pitch = 1
-  utterance.volume = 1
-
-  utterance.onstart = () => setSpeaking(true)
-  utterance.onend = () => setSpeaking(false)
-  utterance.onerror = () => setSpeaking(false)
-
-  window.speechSynthesis.speak(utterance)
-}, [])
-
-  const send = useCallback(async () => {
-    const t = text.trim()
-    if (!t || !user || sending) return
-
-    const messageLang = detectMessageLang(t, langCode)
-
-    const userMsg: ChatMessage = {
-      id: `u-${Date.now()}`,
-      role: 'user',
-      lang: languageLabel(messageLang),
-      text: t,
-    }
-
-    setMessages((prev) => [...prev, userMsg])
-    setText('')
-    setSending(true)
-    scrollToBottom()
-    
-    try {
-      const lastSix = [...messages.slice(-6), userMsg].map((m) => ({
-        role: m.role,
-        content: m.text,
-      }))
-
-      const contextPrefix = weather ? `${weatherLine(weather)}\n` : ''
-      const enrichedMessage = contextPrefix ? `${contextPrefix}\n${t}` : t
-
-      const res = await sendChatMessage({
-        message: enrichedMessage,
-        language: messageLang,
-        sessionId: sessionIdRef.current,
-        history: lastSix.slice(0, -1),
-      })
-
-      sessionIdRef.current = res.sessionId
-      speakText(res.reply, messageLang)
-      const assistantMsg: ChatMessage = {
-        id: `a-${Date.now()}`,
-        role: 'assistant',
-        lang: 'KrishiMitra',
-        text: res.reply,
-      }
-
-      setMessages((prev) => [...prev, assistantMsg])
-      scrollToBottom()
-      speakText(res.reply, messageLang)
-      void saveChatTurn({
-        userId: user.uid,
-        userMessage: t,
-        aiResponse: res.reply,
-        language: messageLang,
-      }).catch((e) => import.meta.env.DEV && console.error('[AIScreen] saveChatTurn', e))
-    } finally {
-      setSending(false)
-    }
-  }, [text, user, sending, langCode, messages, scrollToBottom, weather])
-
   const toggleVoice = useCallback(() => {
     if (!voice.supported) return
+
     if (voice.status === 'listening') {
       voice.stop()
-    } else {
-      voice.start({ lang: voiceLangMap[langCode] })
+      return
     }
+
+    setText('')
+    lastVoiceTranscriptRef.current = ''
+    voice.reset()
+    voice.start({ lang: voiceLangMap[langCode] })
   }, [voice, langCode])
 
   const micButtonClass = (() => {
-    if (!voice.supported) {
-      return 'bg-slate-100 text-slate-400 cursor-not-allowed'
-    }
-    if (voice.status === 'listening') {
-      return 'bg-red-500 text-white shadow-md ring-2 ring-red-200 animate-pulse'
-    }
+    if (!voice.supported) return 'bg-slate-100 text-slate-400 cursor-not-allowed'
+    if (voice.status === 'listening') return 'bg-red-500 text-white shadow-md ring-2 ring-red-200 animate-pulse'
     return 'bg-green-100 text-green-800 hover:scale-105 hover:bg-green-200 hover:text-green-900 active:scale-95'
   })()
 
@@ -293,13 +269,21 @@ export function AIScreen() {
       <div className="mb-3 rounded-3xl border border-green-100 bg-white px-4 py-3 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-green-700">AI assistant</p>
         <p className="text-sm text-slate-600">
-          English · हिंदी · मराठी — tap the mic to speak, or type your question. Chats are saved to your account.
+          English · हिंदी · मराठी — tap the mic to speak, or type your question.
         </p>
+
         {voice.error && (
           <p className="mt-2 rounded-xl bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 ring-1 ring-amber-100">
             {voice.error}
           </p>
         )}
+
+        {voice.status === 'listening' && (
+          <p className="mt-2 rounded-xl bg-green-50 px-3 py-1.5 text-xs font-medium text-green-800 ring-1 ring-green-100">
+            Listening… speak now.
+          </p>
+        )}
+
         {historyLoading && <p className="mt-1 text-xs text-slate-500">Loading your past chats…</p>}
       </div>
 
@@ -325,17 +309,22 @@ export function AIScreen() {
                   : 'max-w-[90%] rounded-2xl rounded-bl-md border border-green-100 bg-white px-4 py-3 text-[15px] leading-relaxed text-slate-800 shadow-sm'
               }
             >
-              <p
-                className={`mb-1 text-[11px] font-semibold uppercase tracking-wide ${
-                  m.role === 'user' ? 'text-white/85' : 'text-green-700'
-                }`}
-              >
+              <p className={`mb-1 text-[11px] font-semibold uppercase tracking-wide ${m.role === 'user' ? 'text-white/85' : 'text-green-700'}`}>
                 {m.lang}
               </p>
               <p className={`whitespace-pre-wrap ${m.role === 'user' ? 'text-white' : ''}`}>{m.text}</p>
             </div>
           </motion.div>
         ))}
+
+        {voice.status === 'listening' && voice.interim && (
+          <div className="flex justify-end">
+            <div className="max-w-[85%] rounded-2xl rounded-br-md bg-green-500/80 px-4 py-3 text-[15px] leading-relaxed text-white shadow-md">
+              {voice.interim}
+            </div>
+          </div>
+        )}
+
         {sending && (
           <div className="flex justify-start" data-testid="ai-typing-indicator">
             <div className="rounded-2xl rounded-bl-md border border-green-100 bg-white px-4 py-3 text-slate-500 shadow-sm">
@@ -347,6 +336,7 @@ export function AIScreen() {
             </div>
           </div>
         )}
+
         {speaking && (
           <div className="flex justify-start" data-testid="ai-speaking-indicator">
             <div className="rounded-2xl rounded-bl-md border border-green-100 bg-white px-4 py-2 text-sm font-medium text-green-700 shadow-sm">
@@ -361,49 +351,40 @@ export function AIScreen() {
           <label htmlFor={inputId} className="sr-only">
             Message
           </label>
+
           <textarea
             id={inputId}
             rows={1}
-            value={voice.status === 'listening' && voice.interim ? `${text} ${voice.interim}`.trim() : text}
+            value={voice.status === 'listening' && voice.interim ? voice.interim : text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
-                void send()
+                void sendMessage()
               }
             }}
-            placeholder={
-              voice.status === 'listening'
-                ? 'Listening…'
-                : 'Message… / संदेश… / संदेश…'
-            }
+            placeholder={voice.status === 'listening' ? 'Listening…' : 'Message… / संदेश… / संदेश…'}
             readOnly={voice.status === 'listening'}
             data-testid="ai-input"
             className="max-h-28 min-h-[48px] flex-1 resize-none rounded-2xl bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none ring-0 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-green-500"
           />
+
           <button
             type="button"
             onClick={toggleVoice}
             disabled={!voice.supported}
-            title={
-              !voice.supported
-                ? 'Voice input not supported on this browser'
-                : voice.status === 'listening'
-                  ? 'Stop listening'
-                  : 'Speak your question'
-            }
-            aria-label={
-              voice.status === 'listening' ? 'Stop listening' : 'Speak your question'
-            }
+            title={!voice.supported ? 'Voice input not supported' : voice.status === 'listening' ? 'Stop listening' : 'Speak your question'}
+            aria-label={voice.status === 'listening' ? 'Stop listening' : 'Speak your question'}
             aria-pressed={voice.status === 'listening'}
             data-testid="ai-voice-btn"
             className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition duration-200 ease-out ${micButtonClass}`}
           >
             <MicIcon className="h-6 w-6" strokeWidth={2} aria-hidden />
           </button>
+
           <button
             type="button"
-            onClick={() => void send()}
+            onClick={() => void sendMessage()}
             disabled={!canSend}
             title="Send message"
             aria-label="Send message"

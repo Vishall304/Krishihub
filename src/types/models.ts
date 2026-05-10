@@ -1,14 +1,22 @@
 import type { Timestamp } from 'firebase/firestore'
 
+export type AppLanguage = 'en' | 'hi' | 'mr'
+
 export type UserProfile = {
   uid: string
   fullName: string
   phone: string
   email: string
+
   village: string
   district: string
   state: string
-  preferredLanguage: string
+
+  preferredLanguage: AppLanguage
+
+  latitude?: number
+  longitude?: number
+
   photoURL?: string
   createdAt: Date
 }
@@ -18,10 +26,15 @@ export type SignUpPayload = {
   phone: string
   email: string
   password: string
+
   village: string
   district: string
   state: string
+
   preferredLanguage: string
+
+  latitude?: number
+  longitude?: number
 }
 
 export type CropDetectionRecord = {
@@ -68,8 +81,10 @@ export type ChatHistoryRecord = {
 
 export function tsToDate(value: Timestamp | Date | undefined): Date {
   if (!value) return new Date()
+
   if (typeof (value as Timestamp).toDate === 'function') {
     return (value as Timestamp).toDate()
   }
+
   return value as Date
 }

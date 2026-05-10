@@ -1,15 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-/**
- * Thin wrapper around the browser Web Speech API.
- *
- * - Works in Chromium-based browsers (Chrome, Edge, Samsung Internet, Brave) and most
- *   modern mobile browsers. Safari partial support via `webkitSpeechRecognition`.
- * - No API key required.
- * - Emits the accumulated transcript (final + interim) while listening.
- * - Auto-stops after ~5 seconds of silence (browser-controlled).
- */
-
 type Status = 'idle' | 'listening' | 'error' | 'unsupported'
 
 export type UseSpeechRecognitionResult = {
@@ -23,15 +13,21 @@ export type UseSpeechRecognitionResult = {
   reset: () => void
 }
 
-// Minimal type shim for SpeechRecognition (not in lib.dom by default).
+type RecognitionResult = {
+  0: { transcript: string }
+  isFinal: boolean
+  length: number
+}
+
 type Recognition = {
   lang: string
   continuous: boolean
   interimResults: boolean
+  maxAlternatives: number
   onstart: (() => void) | null
   onend: (() => void) | null
   onerror: ((e: { error?: string; message?: string }) => void) | null
-  onresult: ((e: { resultIndex: number; results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean; length: number }> }) => void) | null
+  onresult: ((e: { resultIndex: number; results: ArrayLike<RecognitionResult> }) => void) | null
   start: () => void
   stop: () => void
   abort: () => void
@@ -47,10 +43,12 @@ function getRecognitionCtor(): (new () => Recognition) | null {
 }
 
 export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitionResult {
-  const Ctor = useMemo(getRecognitionCtor, [])
+  const Ctor = useMemo(() => getRecognitionCtor(), [])
   const supported = Boolean(Ctor)
 
   const recognitionRef = useRef<Recognition | null>(null)
+  const manuallyStoppedRef = useRef(false)
+
   const [status, setStatus] = useState<Status>(supported ? 'idle' : 'unsupported')
   const [transcript, setTranscript] = useState('')
   const [interim, setInterim] = useState('')
@@ -61,7 +59,7 @@ export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitio
       try {
         recognitionRef.current?.abort()
       } catch {
-        /* ignore */
+        // ignore
       }
       recognitionRef.current = null
     }
@@ -71,18 +69,23 @@ export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitio
     ({ lang }: { lang?: string } = {}) => {
       if (!Ctor) {
         setStatus('unsupported')
+        setError('Speech recognition is not supported in this browser. Use Chrome or Edge.')
         return
       }
+
       try {
         recognitionRef.current?.abort()
       } catch {
-        /* ignore */
+        // ignore
       }
+
+      manuallyStoppedRef.current = false
 
       const recognition = new Ctor()
       recognition.lang = lang || defaultLang
-      recognition.continuous = false
+      recognition.continuous = true
       recognition.interimResults = true
+      recognition.maxAlternatives = 1
 
       recognition.onstart = () => {
         setStatus('listening')
@@ -90,44 +93,57 @@ export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitio
         setTranscript('')
         setInterim('')
       }
+
       recognition.onend = () => {
-        setStatus((s) => (s === 'listening' ? 'idle' : s))
         setInterim('')
+        setStatus((prev) => (prev === 'listening' ? 'idle' : prev))
       }
+
       recognition.onerror = (e) => {
         const code = e?.error ?? 'unknown'
+
         if (code === 'not-allowed' || code === 'service-not-allowed') {
-          setError('Microphone permission is blocked. Please allow it in the browser address bar.')
+          setError('Microphone permission blocked. Click the lock icon near URL and allow microphone.')
         } else if (code === 'no-speech') {
-          setError("Didn't catch that — tap the mic and try again.")
+          setError("Didn't catch that. Speak clearly and try again.")
         } else if (code === 'audio-capture') {
-          setError('No microphone detected on this device.')
+          setError('No microphone detected. Check your device mic.')
         } else if (code === 'network') {
-          setError('Network error during speech recognition.')
+          setError('Speech recognition network error. Check internet connection.')
+        } else if (code === 'aborted') {
+          setError(null)
         } else {
           setError(e?.message || `Speech recognition error: ${code}`)
         }
-        setStatus('error')
+
+        if (code !== 'aborted') setStatus('error')
       }
+
       recognition.onresult = (ev) => {
         let finalText = ''
         let interimText = ''
+
         for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
-          const res = ev.results[i]
-          if (res && typeof res[0]?.transcript === 'string') {
-            if (res.isFinal) finalText += res[0].transcript
-            else interimText += res[0].transcript
-          }
+          const item = ev.results[i]
+          const text = item?.[0]?.transcript ?? ''
+
+          if (item?.isFinal) finalText += text
+          else interimText += text
         }
-        if (finalText) setTranscript((prev) => (prev ? `${prev} ${finalText}` : finalText).trim())
-        setInterim(interimText)
+
+        if (finalText.trim()) {
+          setTranscript((prev) => `${prev} ${finalText}`.trim())
+        }
+
+        setInterim(interimText.trim())
       }
 
       recognitionRef.current = recognition
+
       try {
         recognition.start()
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not start recognition.')
+        setError(err instanceof Error ? err.message : 'Could not start microphone.')
         setStatus('error')
       }
     },
@@ -135,14 +151,21 @@ export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitio
   )
 
   const stop = useCallback(() => {
+    manuallyStoppedRef.current = true
     try {
       recognitionRef.current?.stop()
     } catch {
-      /* ignore */
+      // ignore
     }
+    setStatus('idle')
   }, [])
 
   const reset = useCallback(() => {
+    try {
+      recognitionRef.current?.abort()
+    } catch {
+      // ignore
+    }
     setTranscript('')
     setInterim('')
     setError(null)

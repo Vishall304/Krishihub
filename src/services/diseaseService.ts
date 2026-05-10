@@ -1,11 +1,12 @@
 const DISEASE_ENDPOINT =
-  import.meta.env.VITE_DISEASE_ENDPOINT || 'http://127.0.0.1:8001/api/ai/disease'
+  import.meta.env.VITE_DISEASE_ENDPOINT?.toString().trim() ||
+  'http://127.0.0.1:8001/api/ai/disease'
 
 export type DiseaseResult = {
   crop: string
   disease: string
-  confidence: 'low' | 'medium' | 'high' | string
-  urgency: 'low' | 'medium' | 'high' | string
+  confidence: string
+  urgency: string
   symptoms: string[]
   causes: string[]
   next_steps: string[]
@@ -29,9 +30,7 @@ export async function analyzeCropImage(input: {
     body: formData,
   })
 
-  if (!res.ok) {
-    throw new Error(`Disease analysis failed: ${res.status}`)
-  }
+  if (!res.ok) throw new Error(`Disease analysis failed: ${res.status}`)
 
   return await res.json()
 }
