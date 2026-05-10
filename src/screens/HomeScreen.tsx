@@ -24,6 +24,7 @@ import type { LucideIcon } from 'lucide-react'
 import { feedItems } from '../data/dummy'
 import type { FeedItem, FeedItemKind } from '../data/dummy'
 import type { TabId } from '../types'
+import type { AppLanguage } from '../types/models'
 
 const iconMap: Record<FeedItem['IconKey'], LucideIcon> = {
   newspaper: Newspaper,
@@ -36,19 +37,6 @@ const iconMap: Record<FeedItem['IconKey'], LucideIcon> = {
   bug: Bug,
   users: Users,
   stethoscope: Stethoscope,
-}
-
-const kindLabel: Record<FeedItemKind, string> = {
-  news: 'Farming news',
-  scheme: 'Govt scheme',
-  tips: 'Tip',
-  market: 'Market price',
-  weather: 'Weather alert',
-  irrigation: 'Irrigation',
-  fertilizer: 'Fertiliser',
-  pest: 'Pest advisory',
-  community: 'Community',
-  disease: 'Disease watch',
 }
 
 const kindBadgeTint: Record<FeedItemKind, string> = {
@@ -66,55 +54,174 @@ const kindBadgeTint: Record<FeedItemKind, string> = {
 
 type Filter = 'all' | FeedItemKind
 
-const filters: { key: Filter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'community', label: 'Community' },
-  { key: 'weather', label: 'Weather' },
-  { key: 'market', label: 'Market' },
-  { key: 'scheme', label: 'Schemes' },
-  { key: 'tips', label: 'Tips' },
-  { key: 'news', label: 'News' },
-  { key: 'fertilizer', label: 'Fertiliser' },
-  { key: 'irrigation', label: 'Irrigation' },
-  { key: 'pest', label: 'Pest' },
-  { key: 'disease', label: 'Disease' },
+const filterKeys: Filter[] = [
+  'all',
+  'community',
+  'weather',
+  'market',
+  'scheme',
+  'tips',
+  'news',
+  'fertilizer',
+  'irrigation',
+  'pest',
+  'disease',
 ]
+
+const text = {
+  en: {
+    welcome: 'Welcome back',
+    dashboard: 'Your farm dashboard',
+    season: 'Season: Kharif',
+    kisanFeed: 'Kisan feed',
+    post: 'post',
+    posts: 'posts',
+    noPosts: 'No posts in this category yet.',
+    askAI: 'Ask AI',
+    quick: {
+      detect: 'Detect crop',
+      detectTip: 'Detect crop — photo-based crop check',
+      ai: 'Ask AI',
+      aiTip: 'Ask AI — chat or speak in your language',
+      reminder: 'Reminder',
+      reminderTip: 'Set reminder — irrigation and field tasks',
+    },
+    filters: {
+      all: 'All',
+      community: 'Community',
+      weather: 'Weather',
+      market: 'Market',
+      scheme: 'Schemes',
+      tips: 'Tips',
+      news: 'News',
+      fertilizer: 'Fertiliser',
+      irrigation: 'Irrigation',
+      pest: 'Pest',
+      disease: 'Disease',
+    },
+    kinds: {
+      news: 'Farming news',
+      scheme: 'Govt scheme',
+      tips: 'Tip',
+      market: 'Market price',
+      weather: 'Weather alert',
+      irrigation: 'Irrigation',
+      fertilizer: 'Fertiliser',
+      pest: 'Pest advisory',
+      community: 'Community',
+      disease: 'Disease watch',
+    },
+  },
+  hi: {
+    welcome: 'वापसी पर स्वागत है',
+    dashboard: 'आपका खेती डैशबोर्ड',
+    season: 'मौसम: खरीफ',
+    kisanFeed: 'किसान फीड',
+    post: 'पोस्ट',
+    posts: 'पोस्ट',
+    noPosts: 'इस श्रेणी में अभी कोई पोस्ट नहीं है।',
+    askAI: 'AI से पूछें',
+    quick: {
+      detect: 'फसल जांच',
+      detectTip: 'फसल जांच — फोटो से फसल की जांच',
+      ai: 'AI से पूछें',
+      aiTip: 'AI से पूछें — अपनी भाषा में बोलकर या लिखकर',
+      reminder: 'रिमाइंडर',
+      reminderTip: 'रिमाइंडर सेट करें — सिंचाई और खेत के काम',
+    },
+    filters: {
+      all: 'सभी',
+      community: 'समुदाय',
+      weather: 'मौसम',
+      market: 'बाजार',
+      scheme: 'योजनाएं',
+      tips: 'सुझाव',
+      news: 'समाचार',
+      fertilizer: 'खाद',
+      irrigation: 'सिंचाई',
+      pest: 'कीट',
+      disease: 'रोग',
+    },
+    kinds: {
+      news: 'खेती समाचार',
+      scheme: 'सरकारी योजना',
+      tips: 'सुझाव',
+      market: 'बाजार भाव',
+      weather: 'मौसम अलर्ट',
+      irrigation: 'सिंचाई',
+      fertilizer: 'खाद',
+      pest: 'कीट सलाह',
+      community: 'समुदाय',
+      disease: 'रोग जानकारी',
+    },
+  },
+  mr: {
+    welcome: 'पुन्हा स्वागत आहे',
+    dashboard: 'तुमचा शेती डॅशबोर्ड',
+    season: 'हंगाम: खरीप',
+    kisanFeed: 'शेतकरी फीड',
+    post: 'पोस्ट',
+    posts: 'पोस्ट',
+    noPosts: 'या प्रकारात अजून कोणतीही पोस्ट नाही.',
+    askAI: 'AI ला विचारा',
+    quick: {
+      detect: 'पीक तपासणी',
+      detectTip: 'पीक तपासणी — फोटोवरून पीक तपासा',
+      ai: 'AI ला विचारा',
+      aiTip: 'AI ला विचारा — तुमच्या भाषेत बोला किंवा लिहा',
+      reminder: 'स्मरणपत्र',
+      reminderTip: 'स्मरणपत्र सेट करा — सिंचन आणि शेतातील कामे',
+    },
+    filters: {
+      all: 'सर्व',
+      community: 'समुदाय',
+      weather: 'हवामान',
+      market: 'बाजार',
+      scheme: 'योजना',
+      tips: 'टिप्स',
+      news: 'बातम्या',
+      fertilizer: 'खत',
+      irrigation: 'सिंचन',
+      pest: 'कीड',
+      disease: 'रोग',
+    },
+    kinds: {
+      news: 'शेती बातम्या',
+      scheme: 'सरकारी योजना',
+      tips: 'टिप',
+      market: 'बाजार भाव',
+      weather: 'हवामान सूचना',
+      irrigation: 'सिंचन',
+      fertilizer: 'खत',
+      pest: 'कीड सल्ला',
+      community: 'समुदाय',
+      disease: 'रोग माहिती',
+    },
+  },
+} satisfies Record<AppLanguage, unknown>
 
 type Props = {
   onNavigate: (tab: TabId) => void
+  lang?: AppLanguage
 }
 
-const quickActions = [
-  {
-    key: 'detect',
-    label: 'Detect crop',
-    tooltip: 'Detect crop — photo-based crop check',
-    Icon: Camera,
-    tab: 'detect' as TabId,
-    gradient: 'from-green-600 to-emerald-600',
-  },
-  {
-    key: 'ai',
-    label: 'Ask AI',
-    tooltip: 'Ask AI — chat or speak in your language',
-    Icon: Sparkles,
-    tab: 'ai' as TabId,
-    gradient: 'from-emerald-600 to-green-700',
-  },
-  {
-    key: 'reminder',
-    label: 'Reminder',
-    tooltip: 'Set reminder — irrigation and field tasks',
-    Icon: CalendarDays,
-    tab: 'tracker' as TabId,
-    gradient: 'from-green-700 to-green-600',
-  },
-]
+function getT(lang?: AppLanguage) {
+  return text[lang ?? 'en'] ?? text.en
+}
 
-function FeedCard({ item, index }: { item: FeedItem; index: number }) {
+function FeedCard({
+  item,
+  index,
+  lang,
+}: {
+  item: FeedItem
+  index: number
+  lang: AppLanguage
+}) {
   const Icon = iconMap[item.IconKey]
   const [liked, setLiked] = useState(false)
   const [saved, setSaved] = useState(false)
+  const t = getT(lang)
 
   return (
     <motion.article
@@ -129,26 +236,28 @@ function FeedCard({ item, index }: { item: FeedItem; index: number }) {
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-sm font-bold text-white ring-2 ring-white">
           {item.authorInitials}
         </div>
+
         <div className="min-w-0 flex-1 text-left">
           <p className="truncate text-sm font-semibold text-slate-900">{item.author}</p>
           <p className="truncate text-xs text-slate-500">
             {item.authorHandle} · {item.timeAgo}
           </p>
         </div>
+
         <span
           className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ring-1 ${kindBadgeTint[item.kind]}`}
         >
-          {kindLabel[item.kind]}
+          {t.kinds[item.kind]}
         </span>
       </header>
 
-      {/* Visual hero area */}
       <div
         className={`relative mx-4 mt-3 flex aspect-[5/3] items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br ${item.gradient} text-white`}
         aria-hidden
       >
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.2),transparent_60%)]" />
         <Icon className="relative h-20 w-20 drop-shadow-lg" strokeWidth={1.6} />
+
         {item.meta && (
           <span className="absolute bottom-3 left-3 rounded-full bg-white/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white backdrop-blur">
             {item.meta}
@@ -179,6 +288,7 @@ function FeedCard({ item, index }: { item: FeedItem; index: number }) {
           />
           <span>{item.likes + (liked ? 1 : 0)}</span>
         </button>
+
         <button
           type="button"
           aria-label="Comments"
@@ -188,6 +298,7 @@ function FeedCard({ item, index }: { item: FeedItem; index: number }) {
           <MessageCircle className="h-5 w-5" strokeWidth={2} aria-hidden />
           <span>{item.comments}</span>
         </button>
+
         <button
           type="button"
           aria-label="Share"
@@ -196,6 +307,7 @@ function FeedCard({ item, index }: { item: FeedItem; index: number }) {
         >
           <SendIcon className="h-5 w-5" strokeWidth={2} aria-hidden />
         </button>
+
         <button
           type="button"
           onClick={() => setSaved((v) => !v)}
@@ -217,8 +329,36 @@ function FeedCard({ item, index }: { item: FeedItem; index: number }) {
   )
 }
 
-export function HomeScreen({ onNavigate }: Props) {
+export function HomeScreen({ onNavigate, lang = 'en' }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
+  const t = getT(lang)
+
+  const quickActions = [
+    {
+      key: 'detect',
+      label: t.quick.detect,
+      tooltip: t.quick.detectTip,
+      Icon: Camera,
+      tab: 'detect' as TabId,
+      gradient: 'from-green-600 to-emerald-600',
+    },
+    {
+      key: 'ai',
+      label: t.quick.ai,
+      tooltip: t.quick.aiTip,
+      Icon: Sparkles,
+      tab: 'ai' as TabId,
+      gradient: 'from-emerald-600 to-green-700',
+    },
+    {
+      key: 'reminder',
+      label: t.quick.reminder,
+      tooltip: t.quick.reminderTip,
+      Icon: CalendarDays,
+      tab: 'tracker' as TabId,
+      gradient: 'from-green-700 to-green-600',
+    },
+  ]
 
   const visibleItems = useMemo(
     () => (filter === 'all' ? feedItems : feedItems.filter((i) => i.kind === filter)),
@@ -230,17 +370,19 @@ export function HomeScreen({ onNavigate }: Props) {
       <section className="space-y-3">
         <div className="flex items-end justify-between gap-2 px-1">
           <div>
-            <p className="text-sm font-medium text-green-800">Welcome back</p>
-            <h2 className="text-xl font-bold tracking-tight text-slate-900">Your farm dashboard</h2>
+            <p className="text-sm font-medium text-green-800">{t.welcome}</p>
+            <h2 className="text-xl font-bold tracking-tight text-slate-900">{t.dashboard}</h2>
           </div>
+
           <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
-            Season: Kharif
+            {t.season}
           </span>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           {quickActions.map((action, i) => {
             const Icon = action.Icon
+
             return (
               <motion.button
                 key={action.key}
@@ -268,9 +410,10 @@ export function HomeScreen({ onNavigate }: Props) {
       <section className="space-y-3">
         <div className="flex items-center gap-2 px-1">
           <Bolt className="h-5 w-5 text-green-600" strokeWidth={2} aria-hidden />
-          <h3 className="text-lg font-bold text-slate-900">Kisan feed</h3>
+          <h3 className="text-lg font-bold text-slate-900">{t.kisanFeed}</h3>
+
           <span className="ml-auto text-xs font-medium text-slate-500">
-            {visibleItems.length} {visibleItems.length === 1 ? 'post' : 'posts'}
+            {visibleItems.length} {visibleItems.length === 1 ? t.post : t.posts}
           </span>
         </div>
 
@@ -279,14 +422,15 @@ export function HomeScreen({ onNavigate }: Props) {
           style={{ scrollbarWidth: 'none' }}
           data-testid="feed-filters"
         >
-          {filters.map((f) => {
-            const active = filter === f.key
+          {filterKeys.map((key) => {
+            const active = filter === key
+
             return (
               <button
-                key={f.key}
+                key={key}
                 type="button"
-                onClick={() => setFilter(f.key)}
-                data-testid={`feed-filter-${f.key}`}
+                onClick={() => setFilter(key)}
+                data-testid={`feed-filter-${key}`}
                 className={[
                   'shrink-0 rounded-full px-4 py-1.5 text-sm font-semibold transition duration-200 ease-out',
                   active
@@ -294,7 +438,7 @@ export function HomeScreen({ onNavigate }: Props) {
                     : 'bg-white text-slate-600 ring-1 ring-green-100 hover:scale-[1.02] hover:bg-green-50 hover:text-green-800',
                 ].join(' ')}
               >
-                {f.label}
+                {t.filters[key]}
               </button>
             )
           })}
@@ -302,12 +446,12 @@ export function HomeScreen({ onNavigate }: Props) {
 
         {visibleItems.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-green-200 bg-white p-6 text-center">
-            <p className="text-sm text-slate-600">No posts in this category yet.</p>
+            <p className="text-sm text-slate-600">{t.noPosts}</p>
           </div>
         ) : (
           <div className="flex flex-col gap-4" data-testid="feed-list">
             {visibleItems.map((item, i) => (
-              <FeedCard key={item.id} item={item} index={i} />
+              <FeedCard key={item.id} item={item} index={i} lang={lang} />
             ))}
           </div>
         )}
@@ -316,8 +460,8 @@ export function HomeScreen({ onNavigate }: Props) {
       <motion.button
         type="button"
         onClick={() => onNavigate('ai')}
-        title="Ask AI"
-        aria-label="Ask AI"
+        title={t.askAI}
+        aria-label={t.askAI}
         data-testid="home-ask-ai-fab"
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
