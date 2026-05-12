@@ -16,9 +16,94 @@ import { useAuth } from '../hooks/useAuth'
 import { analyzeCropImage, type DiseaseResult } from '../services/diseaseService'
 import { fetchBestWeather, type WeatherSnapshot } from '../services/weatherService'
 import { normaliseLang } from '../services/aiService'
-
+import type { ReactNode } from 'react'
 type Step = 'upload' | 'preview' | 'result'
 
+const textMap = {
+  en: {
+    badge: 'KrishiMitra Vision AI',
+    title: 'Crop Disease Scanner',
+    subtitle: 'Upload a clear crop photo. AI will explain disease, symptoms, causes, weather risk and next action.',
+    scanTitle: 'Scan crop image',
+    scanSubtitle: 'Use a close clear leaf/stem/fruit photo for better diagnosis.',
+    chooseImage: 'Choose Image',
+    scanning: 'AI scanning crop...',
+    scanningSub: 'Checking disease patterns and weather context',
+    analyze: 'Analyze Crop',
+    analyzing: 'Analyzing...',
+    aiResult: 'AI Result',
+    confidence: 'confidence',
+    urgency: 'Urgency',
+    weather: 'Weather Context',
+    temperature: 'Temperature',
+    rain: 'Rain',
+    advice: 'Smart AI Advice',
+    symptoms: 'Symptoms',
+    causes: 'Causes',
+    nextSteps: 'What To Do Now',
+    prevention: 'Prevention',
+    speaking: 'KrishiMitra is speaking...',
+    scanNew: 'Scan New Crop',
+    selectImageError: 'Please select an image first.',
+    backendError: 'AI analysis failed. Make sure backend server is running.',
+  },
+
+  hi: {
+    badge: 'कृषि मित्र विज़न AI',
+    title: 'फसल रोग स्कैनर',
+    subtitle: 'फसल की साफ फोटो अपलोड करें। AI रोग, लक्षण, कारण, मौसम जोखिम और अगला कदम बताएगा।',
+    scanTitle: 'फसल की फोटो स्कैन करें',
+    scanSubtitle: 'बेहतर जांच के लिए पत्ते, तने या फल की साफ और नजदीक फोटो लें।',
+    chooseImage: 'फोटो चुनें',
+    scanning: 'AI फसल स्कैन कर रहा है...',
+    scanningSub: 'रोग के पैटर्न और मौसम की जानकारी जांची जा रही है',
+    analyze: 'फसल जांचें',
+    analyzing: 'जांच हो रही है...',
+    aiResult: 'AI परिणाम',
+    confidence: 'विश्वास',
+    urgency: 'तत्कालता',
+    weather: 'मौसम जानकारी',
+    temperature: 'तापमान',
+    rain: 'बारिश',
+    advice: 'स्मार्ट AI सलाह',
+    symptoms: 'लक्षण',
+    causes: 'कारण',
+    nextSteps: 'अब क्या करें',
+    prevention: 'बचाव',
+    speaking: 'कृषि मित्र बोल रहा है...',
+    scanNew: 'नई फसल स्कैन करें',
+    selectImageError: 'पहले एक फोटो चुनें।',
+    backendError: 'AI जांच असफल रही। Backend server चालू है या नहीं जांचें।',
+  },
+
+  mr: {
+    badge: 'कृषी मित्र व्हिजन AI',
+    title: 'पीक रोग स्कॅनर',
+    subtitle: 'पीकाचा स्पष्ट फोटो अपलोड करा. AI रोग, लक्षणे, कारणे, हवामान धोका आणि पुढील उपाय सांगेल.',
+    scanTitle: 'पीकाचा फोटो स्कॅन करा',
+    scanSubtitle: 'चांगल्या तपासणीसाठी पान, खोड किंवा फळाचा स्पष्ट जवळचा फोटो घ्या.',
+    chooseImage: 'फोटो निवडा',
+    scanning: 'AI पीक स्कॅन करत आहे...',
+    scanningSub: 'रोगाचे नमुने आणि हवामान माहिती तपासली जात आहे',
+    analyze: 'पीक तपासा',
+    analyzing: 'तपासणी सुरू आहे...',
+    aiResult: 'AI निकाल',
+    confidence: 'विश्वास',
+    urgency: 'तातडी',
+    weather: 'हवामान माहिती',
+    temperature: 'तापमान',
+    rain: 'पाऊस',
+    advice: 'स्मार्ट AI सल्ला',
+    symptoms: 'लक्षणे',
+    causes: 'कारणे',
+    nextSteps: 'आता काय करावे',
+    prevention: 'प्रतिबंध',
+    speaking: 'कृषी मित्र बोलत आहे...',
+    scanNew: 'नवीन पीक स्कॅन करा',
+    selectImageError: 'कृपया आधी एक फोटो निवडा.',
+    backendError: 'AI तपासणी अयशस्वी झाली. Backend server चालू आहे का तपासा.',
+  },
+}
 const voiceLangMap: Record<'en' | 'hi' | 'mr', string> = {
   en: 'en-IN',
   hi: 'hi-IN',
@@ -57,8 +142,12 @@ function cleanForVoice(text: string): string {
   return text
     .replace(/\*\*/g, '')
     .replace(/\*/g, '')
-    .replace(/[#_`~>-]/g, '')
+    .replace(/[#_`~>|•▪■►]/g, '')
     .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+    .replace(/\d+\./g, '')
+    .replace(/:/g, '. ')
+    .replace(/[()]/g, ' ')
+    .replace(/\.{2,}/g, '.')
     .replace(/\n+/g, '. ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -66,7 +155,7 @@ function cleanForVoice(text: string): string {
 
 type SectionProps = {
   title: string
-  icon: React.ReactNode
+  icon: ReactNode
   items: string[]
   className?: string
 }
@@ -120,6 +209,7 @@ export function DetectScreen() {
   const [error, setError] = useState<string | null>(null)
 
   const langCode = normaliseLang(profile?.preferredLanguage)
+  const t = textMap[langCode]
 
   useEffect(() => {
     return () => {
@@ -131,23 +221,70 @@ export function DetectScreen() {
     }
   }, [previewUrl])
 
-  const speakText = useCallback((text: string, lang: 'en' | 'hi' | 'mr') => {
-    if (!('speechSynthesis' in window)) return
+  const speakText = useCallback(async (text: string, lang: 'en' | 'hi' | 'mr') => {
+  if (!('speechSynthesis' in window)) return
 
-    window.speechSynthesis.cancel()
+  window.speechSynthesis.cancel()
+  await new Promise((r) => setTimeout(r, 250))
+  const utterance = new SpeechSynthesisUtterance(
+    cleanForVoice(text),
+  )
 
-    const utterance = new SpeechSynthesisUtterance(cleanForVoice(text))
+  utterance.lang = voiceLangMap[lang]
 
-    utterance.lang = voiceLangMap[lang]
-    utterance.rate = 0.95
-    utterance.pitch = 1
-    utterance.volume = 1
+  utterance.rate = 0.82
+  utterance.pitch = 1
+  utterance.volume = 1
 
-    utterance.onstart = () => setSpeaking(true)
-    utterance.onend = () => setSpeaking(false)
-    utterance.onerror = () => setSpeaking(false)
+  if (lang === 'mr') {
+  utterance.rate = 0.78
+  }
 
-    window.speechSynthesis.speak(utterance)
+  if (lang === 'hi') {
+  utterance.rate = 0.8
+  }
+
+  const loadVoices = () =>
+  new Promise<SpeechSynthesisVoice[]>((resolve) => {
+    let voices = window.speechSynthesis.getVoices()
+
+    if (voices.length) {
+      resolve(voices)
+      return
+    }
+
+    window.speechSynthesis.onvoiceschanged = () => {
+      voices = window.speechSynthesis.getVoices()
+      resolve(voices)
+    }
+  })
+
+  const voices = await loadVoices()
+
+  const preferredVoice =
+    voices.find((v) =>
+      lang === 'mr'
+        ? v.lang.toLowerCase().includes('mr')
+        : lang === 'hi'
+          ? v.lang.toLowerCase().includes('hi')
+          : v.lang.toLowerCase().includes('en-in'),
+    ) ||
+    voices.find((v) =>
+      v.lang.toLowerCase().includes('en'),
+    ) ||
+    voices[0]
+
+  if (preferredVoice) {
+    utterance.voice = preferredVoice
+  }
+
+  utterance.onstart = () => setSpeaking(true)
+
+  utterance.onend = () => setSpeaking(false)
+
+  utterance.onerror = () => setSpeaking(false)
+
+  window.speechSynthesis.speak(utterance)
   }, [])
 
   const onFile = useCallback((file: File | null) => {
@@ -182,6 +319,7 @@ export function DetectScreen() {
 
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
+      
     }
 
     setPreviewUrl((prev) => {
@@ -198,7 +336,7 @@ export function DetectScreen() {
     const file = pickedFileRef.current
 
     if (!file) {
-      setError('Please select an image first.')
+      setError(t.selectImageError)
       return
     }
 
@@ -235,9 +373,7 @@ export function DetectScreen() {
     } catch (err) {
       console.error(err)
 
-      setError(
-        'AI analysis failed. Make sure backend server is running.',
-      )
+      setError(t.backendError)
     } finally {
       setWorking(false)
     }
@@ -261,16 +397,17 @@ export function DetectScreen() {
 
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-green-700">
-                KrishiMitra Vision AI
+                {
+                  t.badge
+                }
               </p>
 
               <h2 className="mt-1 text-2xl font-black text-slate-950">
-                Crop Disease Scanner
+                {t.title}
               </h2>
 
               <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                Upload a clear crop photo. AI will explain disease,
-                symptoms, causes, weather risk and next action.
+                {t.subtitle}
               </p>
             </div>
           </div>
@@ -298,11 +435,11 @@ export function DetectScreen() {
             </div>
 
             <p className="mt-4 text-xl font-black text-slate-900">
-              Scan crop image
+              {t.scanTitle}
             </p>
 
             <p className="mt-1 text-sm text-slate-600">
-              Use a close clear leaf/stem/fruit photo for better diagnosis.
+              {t.scanSubtitle}
             </p>
 
             <input
@@ -320,7 +457,7 @@ export function DetectScreen() {
               className="mx-auto mt-6 inline-flex cursor-pointer items-center gap-2 rounded-2xl bg-green-600 px-6 py-3 font-bold text-white shadow-lg shadow-green-900/20 transition hover:scale-[1.02] hover:bg-green-700 active:scale-95"
             >
               <Camera className="h-5 w-5" />
-              Choose Image
+              {t.chooseImage}
             </label>
           </motion.div>
         )}
@@ -365,11 +502,11 @@ export function DetectScreen() {
                       <RefreshCw className="mx-auto h-9 w-9 animate-spin text-green-700" />
 
                       <p className="mt-2 text-sm font-black text-slate-900">
-                        AI scanning crop...
+                        {t.scanning}
                       </p>
 
                       <p className="text-xs text-slate-500">
-                        Checking disease patterns and weather context
+                        {t.scanningSub}
                       </p>
                     </div>
                   </div>
@@ -390,7 +527,7 @@ export function DetectScreen() {
                   <Sparkles className="h-6 w-6" />
                 )}
 
-                {working ? 'Analyzing...' : 'Analyze Crop'}
+                {working ? t.analyzing : t.analyze}
               </button>
 
               <button
@@ -428,11 +565,11 @@ export function DetectScreen() {
               {/* TOP */}
               <div className="flex items-center gap-3">
                 <span className="rounded-2xl bg-green-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-green-800">
-                  AI Result
+                  {t.aiResult}
                 </span>
 
                 <span className="ml-auto rounded-full bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-800 ring-1 ring-emerald-200">
-                  {result.confidence} confidence
+                  {result.confidence} {t.confidence}
                 </span>
               </div>
 
@@ -446,7 +583,7 @@ export function DetectScreen() {
 
               <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-red-50 px-4 py-2 text-sm font-bold text-red-800 ring-1 ring-red-100">
                 <ShieldAlert className="h-4 w-4" />
-                Urgency: {result.urgency}
+                {t.urgency}: {result.urgency}
               </div>
 
               {/* WEATHER */}
@@ -454,7 +591,7 @@ export function DetectScreen() {
                 <div className="mt-5 rounded-3xl bg-gradient-to-br from-blue-50 to-cyan-50 p-4 ring-1 ring-blue-100">
                   <div className="mb-2 flex items-center gap-2 font-bold text-blue-900">
                     <CloudRain className="h-5 w-5" />
-                    Weather Context
+                    {t.weather}
                   </div>
 
                   <p className="text-sm text-blue-900">
@@ -463,14 +600,14 @@ export function DetectScreen() {
 
                   <div className="mt-3 flex gap-3">
                     <div className="rounded-2xl bg-white/80 px-4 py-3 shadow-sm">
-                      <p className="text-xs text-slate-500">Temperature</p>
+                      <p className="text-xs text-slate-500">{t.temperature}</p>
                       <p className="text-lg font-black text-slate-900">
                         {weather.tempC}°C
                       </p>
                     </div>
 
                     <div className="rounded-2xl bg-white/80 px-4 py-3 shadow-sm">
-                      <p className="text-xs text-slate-500">Rain</p>
+                      <p className="text-xs text-slate-500">{t.rain}</p>
                       <p className="text-lg font-black text-slate-900">
                         {weather.rainChance}%
                       </p>
@@ -488,7 +625,7 @@ export function DetectScreen() {
                 <div className="mt-5 rounded-3xl bg-gradient-to-br from-yellow-50 to-orange-50 p-4 ring-1 ring-yellow-100">
                   <div className="mb-2 flex items-center gap-2 font-bold text-yellow-900">
                     <Sparkles className="h-5 w-5" />
-                    Smart AI Advice
+                    {t.advice}
                   </div>
 
                   <p className="text-sm leading-relaxed text-yellow-900">
@@ -500,28 +637,28 @@ export function DetectScreen() {
               {/* SECTIONS */}
               <div className="mt-5 space-y-4">
                 <Section
-                  title="Symptoms"
+                  title={t.symptoms}
                   icon={<Activity className="h-5 w-5 text-red-600" />}
                   items={result.symptoms}
                   className="bg-red-50/70 ring-red-100"
                 />
 
                 <Section
-                  title="Causes"
+                  title={t.causes}
                   icon={<FlaskConical className="h-5 w-5 text-orange-600" />}
                   items={result.causes}
                   className="bg-orange-50/70 ring-orange-100"
                 />
 
                 <Section
-                  title="What To Do Now"
+                  title={t.nextSteps}
                   icon={<Leaf className="h-5 w-5 text-green-700" />}
                   items={result.next_steps}
                   className="bg-green-50/80 ring-green-100"
                 />
 
                 <Section
-                  title="Prevention"
+                  title={t.prevention}
                   icon={<ShieldAlert className="h-5 w-5 text-blue-700" />}
                   items={result.prevention}
                   className="bg-blue-50/70 ring-blue-100"
@@ -532,7 +669,7 @@ export function DetectScreen() {
               {speaking && (
                 <div className="mt-5 flex items-center gap-2 rounded-2xl bg-green-50 px-4 py-3 text-sm font-bold text-green-800 ring-1 ring-green-100">
                   <Volume2 className="h-5 w-5 animate-pulse" />
-                  KrishiMitra is speaking...
+                  {t.speaking}
                 </div>
               )}
 
@@ -542,7 +679,7 @@ export function DetectScreen() {
                 onClick={reset}
                 className="mt-6 w-full rounded-2xl bg-green-600 py-4 text-base font-black text-white shadow-lg shadow-green-900/20 transition hover:bg-green-700 active:scale-[0.99]"
               >
-                Scan New Crop
+                {t.scanNew}
               </button>
             </div>
           </motion.div>

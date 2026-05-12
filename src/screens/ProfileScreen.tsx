@@ -10,35 +10,85 @@ import {
   User,
   LocateFixed,
 } from 'lucide-react'
+
 import { useNavigate } from 'react-router-dom'
+
 import { weatherSnapshot } from '../data/dummy'
 import { useAuth } from '../hooks/useAuth'
 import { fetchActivitiesForUser } from '../services/activityService'
 import { fetchRemindersForUser } from '../services/reminderService'
 import { uploadProfilePhoto } from '../services/storageService'
-type LanguageCode = 'en' | 'hi' | 'mr'
+const textMap = {
+  en: {
+    yourDetails: 'Your details',
+    fullName: 'Full name',
+    phone: 'Phone',
+    village: 'Village',
+    district: 'District',
+    state: 'State',
+    language: 'Preferred language',
+    useLocation: 'Use Current Location',
+    detecting: 'Detecting location...',
+    save: 'Save profile',
+    weather: 'Weather snapshot',
+    temperature: 'Temperature',
+    humidity: 'Humidity',
+    rainChance: 'Rain chance',
+    logout: 'Logout',
+    reminder: 'Reminder summary',
+    pending: 'Pending reminders',
+  },
 
-type ProfileDraft = {
-  fullName: string
-  phone: string
-  village: string
-  district: string
-  state: string
-  preferredLanguage: LanguageCode
-  latitude: number
-  longitude: number
+  hi: {
+    yourDetails: 'आपकी जानकारी',
+    fullName: 'पूरा नाम',
+    phone: 'मोबाइल नंबर',
+    village: 'गांव',
+    district: 'जिला',
+    state: 'राज्य',
+    language: 'भाषा',
+    useLocation: 'वर्तमान स्थान इस्तेमाल करें',
+    detecting: 'लोकेशन पता किया जा रहा है...',
+    save: 'प्रोफाइल सेव करें',
+    weather: 'मौसम जानकारी',
+    temperature: 'तापमान',
+    humidity: 'नमी',
+    rainChance: 'बारिश संभावना',
+    logout: 'लॉगआउट',
+    reminder: 'रिमाइंडर सारांश',
+    pending: 'बाकी रिमाइंडर',
+  },
+
+  mr: {
+    yourDetails: 'तुमची माहिती',
+    fullName: 'पूर्ण नाव',
+    phone: 'मोबाईल नंबर',
+    village: 'गाव',
+    district: 'जिल्हा',
+    state: 'राज्य',
+    language: 'भाषा',
+    useLocation: 'सध्याचे स्थान वापरा',
+    detecting: 'स्थान शोधले जात आहे...',
+    save: 'प्रोफाइल सेव करा',
+    weather: 'हवामान माहिती',
+    temperature: 'तापमान',
+    humidity: 'आर्द्रता',
+    rainChance: 'पावसाची शक्यता',
+    logout: 'लॉगआउट',
+    reminder: 'रिमाइंडर सारांश',
+    pending: 'बाकी रिमाइंडर',
+  },
 }
+
 export function ProfileScreen() {
   const navigate = useNavigate()
 
   const {
     profile,
     user,
-    profileLoading,
     saveProfilePatch,
     signOutUser,
     clearError,
-    error,
   } = useAuth()
 
   const photoInputId = useId()
@@ -47,16 +97,11 @@ export function ProfileScreen() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [detectingLocation, setDetectingLocation] = useState(false)
 
-  const [photoError, setPhotoError] = useState<string | null>(null)
-
-  const [statsLoading, setStatsLoading] = useState(true)
-
   const [tasksDone, setTasksDone] = useState(0)
   const [tasksPending, setTasksPending] = useState(0)
   const [reminderCount, setReminderCount] = useState(0)
-  const [lastActivity, setLastActivity] = useState('—')
 
-  const [draft, setDraft] = useState<ProfileDraft>({
+  const [draft, setDraft] = useState({
     fullName: '',
     phone: '',
     village: '',
@@ -82,29 +127,28 @@ export function ProfileScreen() {
     })
   }, [profile])
 
+  const lang =
+    draft.preferredLanguage === 'hi'
+      ? 'hi'
+      : draft.preferredLanguage === 'mr'
+        ? 'mr'
+        : 'en'
+
+  const t = textMap[lang]
+
   const loadStats = useCallback(async () => {
     if (!user) return
 
-    setStatsLoading(true)
+    const [acts, rems] = await Promise.all([
+      fetchActivitiesForUser(user.uid),
+      fetchRemindersForUser(user.uid),
+    ])
 
-    try {
-      const [acts, rems] = await Promise.all([
-        fetchActivitiesForUser(user.uid),
-        fetchRemindersForUser(user.uid),
-      ])
+    setTasksDone(acts.filter((a) => a.status === 'done').length)
 
-      setTasksDone(acts.filter((a) => a.status === 'done').length)
+    setTasksPending(acts.filter((a) => a.status === 'pending').length)
 
-      setTasksPending(acts.filter((a) => a.status === 'pending').length)
-
-      setReminderCount(rems.filter((r) => r.status === 'pending').length)
-
-      const latest = acts[0]
-
-      setLastActivity(latest ? latest.date : '—')
-    } finally {
-      setStatsLoading(false)
-    }
+    setReminderCount(rems.filter((r) => r.status === 'pending').length)
   }, [user])
 
   useEffect(() => {
@@ -151,14 +195,11 @@ export function ProfileScreen() {
           }))
         } catch (e) {
           console.error(e)
-          alert('Location fetch failed')
         } finally {
           setDetectingLocation(false)
         }
       },
-      (err) => {
-        console.error(err)
-        alert('Location permission denied')
+      () => {
         setDetectingLocation(false)
       }
     )
@@ -168,7 +209,6 @@ export function ProfileScreen() {
 
   const onSave = async () => {
     clearError()
-    setPhotoError(null)
 
     setSaving(true)
 
@@ -180,13 +220,10 @@ export function ProfileScreen() {
         district: draft.district.trim(),
         state: draft.state.trim(),
 
-        preferredLanguage: draft.preferredLanguage,
-
+        preferredLanguage: draft.preferredLanguage as 'en' | 'hi' | 'mr',
         latitude: draft.latitude,
         longitude: draft.longitude,
       })
-
-      alert('Profile updated successfully')
     } finally {
       setSaving(false)
     }
@@ -194,9 +231,6 @@ export function ProfileScreen() {
 
   const onPhoto = async (file: File | null) => {
     if (!file || !user) return
-
-    clearError()
-    setPhotoError(null)
 
     setUploadingPhoto(true)
 
@@ -206,14 +240,6 @@ export function ProfileScreen() {
       await saveProfilePatch({
         photoURL: url,
       })
-
-      setPhotoError(null)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Photo upload failed.'
-
-      setPhotoError(msg)
-
-      console.error(e)
     } finally {
       setUploadingPhoto(false)
     }
@@ -266,6 +292,7 @@ export function ProfileScreen() {
               accept="image/*"
               className="sr-only"
               onChange={(e) => onPhoto(e.target.files?.[0] ?? null)}
+              disabled={uploadingPhoto}
             />
           </div>
 
@@ -289,19 +316,54 @@ export function ProfileScreen() {
         </div>
       </motion.div>
 
+      <div className="grid grid-cols-3 gap-3">
+
+        <div className="rounded-3xl border border-green-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-green-700">
+            Done
+          </p>
+
+          <p className="mt-2 text-2xl font-bold text-slate-900">
+            {tasksDone}
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-green-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-green-700">
+            Pending
+          </p>
+
+          <p className="mt-2 text-2xl font-bold text-slate-900">
+            {tasksPending}
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-green-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold text-green-700">
+            {t.pending}
+          </p>
+
+          <p className="mt-2 text-2xl font-bold text-slate-900">
+            {reminderCount}
+          </p>
+        </div>
+
+      </div>
+
       <section className="rounded-3xl border border-green-100 bg-white p-5 shadow-md">
 
         <div className="flex items-center gap-2">
           <Sparkles className="h-6 w-6 text-green-600" />
+
           <h3 className="text-lg font-bold text-slate-900">
-            Your details
+            {t.yourDetails}
           </h3>
         </div>
 
         <div className="mt-4 space-y-3">
 
           <ProfileField
-            label="Full name"
+            label={t.fullName}
             value={draft.fullName}
             onChange={(v) =>
               setDraft((d) => ({ ...d, fullName: v }))
@@ -309,7 +371,7 @@ export function ProfileScreen() {
           />
 
           <ProfileField
-            label="Phone"
+            label={t.phone}
             value={draft.phone}
             onChange={(v) =>
               setDraft((d) => ({ ...d, phone: v }))
@@ -317,7 +379,7 @@ export function ProfileScreen() {
           />
 
           <ProfileField
-            label="Village"
+            label={t.village}
             value={draft.village}
             onChange={(v) =>
               setDraft((d) => ({ ...d, village: v }))
@@ -325,7 +387,7 @@ export function ProfileScreen() {
           />
 
           <ProfileField
-            label="District"
+            label={t.district}
             value={draft.district}
             onChange={(v) =>
               setDraft((d) => ({ ...d, district: v }))
@@ -333,7 +395,7 @@ export function ProfileScreen() {
           />
 
           <ProfileField
-            label="State"
+            label={t.state}
             value={draft.state}
             onChange={(v) =>
               setDraft((d) => ({ ...d, state: v }))
@@ -342,23 +404,23 @@ export function ProfileScreen() {
 
           <div>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Preferred language
+              {t.language}
             </label>
 
             <select
-               value={draft.preferredLanguage}
-               onChange={(e) =>
+              value={draft.preferredLanguage}
+              onChange={(e) =>
                 setDraft((d) => ({
                   ...d,
                   preferredLanguage: e.target.value as 'en' | 'hi' | 'mr',
-               }))
+                }))
               }
-               className="mt-1 w-full rounded-2xl border border-green-100 bg-green-50/80 px-4 py-2.5 text-base font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-green-500"
-             >
-               <option value="en">English</option>
-               <option value="hi">हिंदी</option>
-               <option value="mr">मराठी</option>
-             </select>
+              className="mt-1 w-full rounded-2xl border border-green-100 bg-green-50/80 px-4 py-3 text-base font-medium text-slate-900 outline-none focus:ring-2 focus:ring-green-500"
+            >
+              <option value="en">English</option>
+              <option value="hi">हिंदी</option>
+              <option value="mr">मराठी</option>
+            </select>
           </div>
 
           <button
@@ -370,8 +432,8 @@ export function ProfileScreen() {
             <LocateFixed className="h-5 w-5" />
 
             {detectingLocation
-              ? 'Detecting location...'
-              : 'Use Current Location'}
+              ? t.detecting
+              : t.useLocation}
           </button>
 
           <button
@@ -380,16 +442,18 @@ export function ProfileScreen() {
             disabled={saving}
             className="w-full rounded-2xl bg-green-600 py-3 text-base font-semibold text-white shadow-md transition hover:bg-green-700"
           >
-            {saving ? 'Saving…' : 'Save profile'}
+            {saving ? 'Saving...' : t.save}
           </button>
         </div>
       </section>
 
       <section className="rounded-3xl border border-green-100 bg-gradient-to-br from-sky-50 to-green-50 p-5 shadow-md">
+
         <div className="flex items-center justify-between gap-3">
+
           <div>
             <p className="text-xs font-bold uppercase tracking-wide text-green-800">
-              Weather snapshot
+              {t.weather}
             </p>
 
             <h3 className="mt-1 text-lg font-bold text-slate-900">
@@ -404,7 +468,7 @@ export function ProfileScreen() {
 
           <div className="rounded-2xl bg-white/80 p-3 ring-1 ring-green-100">
             <p className="text-xs font-semibold text-slate-500">
-              Temperature
+              {t.temperature}
             </p>
 
             <p className="mt-1 text-xl font-bold text-slate-900">
@@ -418,7 +482,7 @@ export function ProfileScreen() {
 
           <div className="rounded-2xl bg-white/80 p-3 ring-1 ring-green-100">
             <p className="text-xs font-semibold text-slate-500">
-              Humidity
+              {t.humidity}
             </p>
 
             <p className="mt-1 text-xl font-bold text-slate-900">
@@ -427,7 +491,7 @@ export function ProfileScreen() {
 
             <p className="flex items-center gap-1 text-sm text-slate-600">
               <Cloud className="h-4 w-4" />
-              Rain chance {weatherSnapshot.rainChance}%
+              {t.rainChance} {weatherSnapshot.rainChance}%
             </p>
           </div>
 

@@ -83,6 +83,7 @@ export function AIScreen() {
   const langCode = normaliseLang(profile?.preferredLanguage)
   const sessionIdRef = useRef<string | undefined>(undefined)
   const lastVoiceTranscriptRef = useRef('')
+  const voiceSendTimerRef = useRef<number | null>(null)
 
   const welcome: ChatMessage = useMemo(
     () => ({ id: 'welcome', role: 'assistant', lang: 'KrishiMitra', text: welcomeByLanguage[langCode] }),
@@ -198,29 +199,48 @@ export function AIScreen() {
   }, [])
 
   useEffect(() => {
-    return () => {
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+  return () => {
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+
+    if (voiceSendTimerRef.current) {
+      window.clearTimeout(voiceSendTimerRef.current)
     }
-  }, [])
+  }
+}, [])
 
   useEffect(() => {
-    if (!voice.transcript) return
+  const finalText = voice.transcript.trim()
+  if (!finalText) return
 
-    const finalText = voice.transcript.trim()
-    if (!finalText || finalText === lastVoiceTranscriptRef.current) return
-
-    lastVoiceTranscriptRef.current = finalText
-    setText(finalText)
-  }, [voice.transcript])
+  setText(finalText)
+}, [voice.transcript])
 
   useEffect(() => {
-    const finalText = voice.transcript.trim()
-    if (voice.status === 'idle' && finalText && !sending) {
-      void sendMessage(finalText)
-      voice.reset()
-      lastVoiceTranscriptRef.current = ''
+  const finalText = voice.transcript.trim()
+
+  if (voice.status !== 'idle' || !finalText || sending) return
+
+  if (voiceSendTimerRef.current) {
+    window.clearTimeout(voiceSendTimerRef.current)
+  }
+
+  voiceSendTimerRef.current = window.setTimeout(() => {
+    const stableText = voice.transcript.trim()
+
+    if (!stableText) return
+
+    void sendMessage(stableText)
+
+    voice.reset()
+    lastVoiceTranscriptRef.current = ''
+  }, 900)
+
+  return () => {
+    if (voiceSendTimerRef.current) {
+      window.clearTimeout(voiceSendTimerRef.current)
     }
-  }, [voice.status, voice.transcript, sending, sendMessage, voice])
+  }
+}, [voice.status, voice.transcript, sending, sendMessage, voice])
 
   const loadHistory = useCallback(async () => {
     if (!user) return
@@ -246,9 +266,13 @@ export function AIScreen() {
     if (!voice.supported) return
 
     if (voice.status === 'listening') {
+      if (voiceSendTimerRef.current) {
+    window.clearTimeout(voiceSendTimerRef.current)
+  }
+
       voice.stop()
       return
-    }
+      }
 
     setText('')
     lastVoiceTranscriptRef.current = ''

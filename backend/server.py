@@ -146,53 +146,107 @@ async def call_vision_llm(image_bytes: bytes, mime_type: str, language: str, cro
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not configured")
 
+    lang = normalise_language(language)
+
+    language_rules = {
+        "en": {
+            "name": "English",
+            "instruction": "Write ONLY in simple English. Do not mix Hindi or Marathi.",
+            "fallback_disease": "Image analysis failed",
+            "fallback_symptom": "Unable to analyze image clearly",
+            "fallback_cause": "Image may be blurry, dark, or unclear",
+            "fallback_steps": [
+                "Upload a clearer close-up image",
+                "Capture both front and back side of the leaf",
+                "Ensure good lighting",
+            ],
+            "fallback_prevention": ["Maintain healthy crop conditions"],
+        },
+        "hi": {
+            "name": "Hindi",
+            "instruction": "केवल सरल हिंदी में लिखें। English या Marathi mix बिल्कुल न करें।",
+            "fallback_disease": "इमेज विश्लेषण असफल रहा",
+            "fallback_symptom": "इमेज साफ़ तरीके से समझ में नहीं आई",
+            "fallback_cause": "फोटो धुंधली, अंधेरी या अस्पष्ट हो सकती है",
+            "fallback_steps": [
+                "कृपया साफ़ और नज़दीक से फोटो अपलोड करें",
+                "पत्ते के आगे और पीछे दोनों तरफ की फोटो लें",
+                "फोटो अच्छी रोशनी में लें",
+            ],
+            "fallback_prevention": ["फसल की नियमित निगरानी करें"],
+        },
+        "mr": {
+            "name": "Marathi",
+            "instruction": "फक्त सोप्या मराठीत लिहा. English किंवा Hindi mix अजिबात करू नका.",
+            "fallback_disease": "इमेज विश्लेषण अयशस्वी झाले",
+            "fallback_symptom": "इमेज स्पष्टपणे समजू शकली नाही",
+            "fallback_cause": "फोटो धूसर, अंधुक किंवा अस्पष्ट असू शकतो",
+            "fallback_steps": [
+                "कृपया स्पष्ट आणि जवळचा फोटो अपलोड करा",
+                "पानाच्या पुढील आणि मागील बाजूचा फोटो घ्या",
+                "फोटो चांगल्या प्रकाशात घ्या",
+            ],
+            "fallback_prevention": ["पिकाची नियमित पाहणी करा"],
+        },
+    }
+
+    rule = language_rules[lang]
+
     model = genai.GenerativeModel(
         DEFAULT_MODEL_NAME,
         system_instruction=(
-            "You are an expert agriculture scientist. "
-            "Always give detailed structured crop disease analysis for Indian farmers."
+            "You are KrishiMitra AI, an expert agriculture scientist for Indian farmers. "
+            "You must return only valid JSON. "
+            "Do not use markdown, bullet symbols, numbering, headings outside JSON, or extra text. "
+            f"{rule['instruction']} "
+            "Keep every sentence clear, practical, farmer-friendly, and suitable for voice reading."
         ),
     )
 
     prompt = f"""
-You are KrishiMitra AI — an expert agricultural scientist helping Indian farmers.
-
-Analyze the crop/plant image deeply and give a professional diagnosis.
+Analyze the uploaded crop or plant image deeply.
 
 Crop hint: {crop or "unknown"}
+
+LANGUAGE RULE:
+{rule["instruction"]}
+Every JSON string value and every array item must be in {rule["name"]} only.
 
 Return ONLY valid JSON in this exact structure:
 
 {{
-  "crop": "exact crop name or unknown",
-  "disease": "specific disease/pest/nutrient deficiency",
+  "crop": "crop name or unknown",
+  "disease": "specific disease, pest, or nutrient deficiency",
   "confidence": "low/medium/high",
   "urgency": "low/medium/high",
   "symptoms": [
-    "detailed visible symptom 1",
-    "detailed visible symptom 2",
-    "pattern on leaves/stem/fruit"
+    "clear visible symptom",
+    "another visible symptom",
+    "leaf, stem, fruit, or pattern observation"
   ],
   "causes": [
-    "biological reason such as fungus, pest, bacteria, deficiency",
-    "environmental reason such as soil, irrigation, humidity"
+    "possible biological reason",
+    "possible environmental or management reason"
   ],
   "next_steps": [
-    "step-by-step treatment",
-    "immediate action farmer should take",
-    "spray or solution guidance without exact chemical dosage"
+    "first practical action farmer should take",
+    "second practical action farmer should take",
+    "safe spray or treatment guidance without exact dosage"
   ],
   "prevention": [
     "future prevention method",
-    "best farming practices"
+    "best farming practice"
   ]
 }}
 
 Important:
-- Answer in {language}.
-- Give detailed explanation.
-- If image is unclear, keep confidence low and ask for a clearer photo.
-- Do not invent exact chemical quantities or dosages.
+- Return JSON only.
+- Do not wrap response in ```json.
+- Do not add explanation outside JSON.
+- Do not mix languages.
+- Do not invent exact chemical quantities, pesticide names, or dosages.
+- If image is unclear, set confidence to low and ask for a clearer close-up photo in next_steps.
+- Keep each array item as a complete natural sentence, not bullet text.
 """
 
     try:
@@ -212,39 +266,29 @@ Important:
         result = json.loads(text)
 
         return {
-            "crop": result.get("crop", crop or "unknown"),
-            "disease": result.get("disease", "Not identified clearly"),
-            "confidence": result.get("confidence", "low"),
-            "urgency": result.get("urgency", "medium"),
-            "symptoms": result.get("symptoms", []),
-            "causes": result.get("causes", []),
-            "next_steps": result.get("next_steps", []),
-            "prevention": result.get("prevention", []),
+            "crop": str(result.get("crop", crop or "unknown")),
+            "disease": str(result.get("disease", rule["fallback_disease"])),
+            "confidence": str(result.get("confidence", "low")),
+            "urgency": str(result.get("urgency", "medium")),
+            "symptoms": result.get("symptoms") if isinstance(result.get("symptoms"), list) else [],
+            "causes": result.get("causes") if isinstance(result.get("causes"), list) else [],
+            "next_steps": result.get("next_steps") if isinstance(result.get("next_steps"), list) else [],
+            "prevention": result.get("prevention") if isinstance(result.get("prevention"), list) else [],
         }
 
     except Exception:
         logger.exception("Vision AI failed, using fallback")
+
         return {
             "crop": crop or "unknown",
-            "disease": "Image analysis failed",
+            "disease": rule["fallback_disease"],
             "confidence": "low",
             "urgency": "medium",
-            "symptoms": ["Unable to analyze image clearly"],
-            "causes": ["Image may be blurry, dark, or unclear"],
-            "next_steps": [
-                "Upload a clearer close-up image",
-                "Capture both front and back side of the leaf",
-                "Ensure good lighting",
-            ],
-            "prevention": ["Maintain healthy crop conditions"],
+            "symptoms": [rule["fallback_symptom"]],
+            "causes": [rule["fallback_cause"]],
+            "next_steps": rule["fallback_steps"],
+            "prevention": rule["fallback_prevention"],
         }
-
-
-app = FastAPI(title="KrishiMitra AI API", version="1.0.0")
-api_router = APIRouter(prefix="/api")
-
-
-@api_router.get("/")
 async def health() -> dict:
     return {
         "status": "ok",
@@ -253,7 +297,18 @@ async def health() -> dict:
         "model": f"gemini:{DEFAULT_MODEL_NAME}",
     }
 
+app = FastAPI(title="KrishiMitra AI API", version="1.0.0")
+api_router = APIRouter(prefix="/api")
 
+@api_router.get("/")
+async def health() -> dict:
+    
+    return {
+        "status": "ok",
+        "service": "krishimitra-ai",
+        "llm_configured": bool(GEMINI_API_KEY),
+        "model": f"gemini:{DEFAULT_MODEL_NAME}",
+    }
 @api_router.get("/ai/models")
 async def list_models():
     models = []

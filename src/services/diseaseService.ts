@@ -15,14 +15,39 @@ export type DiseaseResult = {
   source: 'llm' | 'fallback'
 }
 
+function normaliseDiseaseLanguage(
+  language: string,
+): 'en' | 'hi' | 'mr' {
+  const v = language.toLowerCase().trim()
+
+  if (
+    ['hi', 'hindi', 'हिंदी', 'हिन्दी'].includes(v)
+  ) {
+    return 'hi'
+  }
+
+  if (
+    ['mr', 'marathi', 'मराठी'].includes(v)
+  ) {
+    return 'mr'
+  }
+
+  return 'en'
+}
+
 export async function analyzeCropImage(input: {
   file: File
   language: 'en' | 'hi' | 'mr' | string
   crop?: string
 }): Promise<DiseaseResult> {
+  const language = normaliseDiseaseLanguage(
+    input.language,
+  )
+
   const formData = new FormData()
+
   formData.append('image', input.file)
-  formData.append('language', input.language)
+  formData.append('language', language)
   formData.append('crop', input.crop || '')
 
   const res = await fetch(DISEASE_ENDPOINT, {
@@ -30,7 +55,11 @@ export async function analyzeCropImage(input: {
     body: formData,
   })
 
-  if (!res.ok) throw new Error(`Disease analysis failed: ${res.status}`)
+  if (!res.ok) {
+    throw new Error(
+      `Disease analysis failed: ${res.status}`,
+    )
+  }
 
   return await res.json()
 }

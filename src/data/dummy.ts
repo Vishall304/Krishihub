@@ -20,6 +20,9 @@ export type FeedItem = {
   author: string
   authorHandle: string
   authorInitials: string
+  location: string
+  avatarUrl: string
+  imageUrl: string
   timeAgo: string
   meta?: string
   likes: number
@@ -42,12 +45,17 @@ export const feedItems: FeedItem[] = [
   {
     id: 'f1',
     kind: 'weather',
-    title: 'Rain alert: 5–12 mm expected Tuesday across Pune–Satara',
+    title: 'Storm warning for western Maharashtra fields',
     description:
-      'Cover harvested produce, delay fertiliser top-dressing by 24 hours, and keep drainage channels clear.',
+      'Heavy clouds expected overnight. Cover raised beds and secure open grain stores to avoid water damage.',
     author: 'IMD Advisory',
     authorHandle: '@imd_pune',
     authorInitials: 'IM',
+    location: 'Pune region',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1501004318641-b39e6451bec6?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '12 min ago',
     meta: 'Official advisory',
     likes: 182,
@@ -64,6 +72,11 @@ export const feedItems: FeedItem[] = [
     author: 'AgMarknet',
     authorHandle: '@mandi_bhav',
     authorInitials: 'AM',
+    location: 'Pune APMC',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1524594154905-5f6a9d1b056f?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1515150144380-bca1f3a3c1f5?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '35 min ago',
     meta: 'Daily market',
     likes: 95,
@@ -80,6 +93,11 @@ export const feedItems: FeedItem[] = [
     author: 'Govt of India',
     authorHandle: '@pmfby_official',
     authorInitials: 'GI',
+    location: 'Nationwide',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1517445312888-7a3cbe923ef9?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1517445312888-7a3cbe923ef9?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '2 hr ago',
     meta: 'Deadline soon',
     likes: 241,
@@ -96,6 +114,11 @@ export const feedItems: FeedItem[] = [
     author: 'Ramesh Pawar',
     authorHandle: '@ramesh_farms',
     authorInitials: 'RP',
+    location: 'Baramati, MH',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '3 hr ago',
     meta: 'Community story',
     likes: 412,
@@ -112,6 +135,11 @@ export const feedItems: FeedItem[] = [
     author: 'KVK Baramati',
     authorHandle: '@kvk_baramati',
     authorInitials: 'KB',
+    location: 'Baramati, MH',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1498654896293-37aacf113fd9?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '5 hr ago',
     meta: 'Agronomy tip',
     likes: 76,
@@ -128,6 +156,11 @@ export const feedItems: FeedItem[] = [
     author: 'ICAR Pune',
     authorHandle: '@icar_pune',
     authorInitials: 'IC',
+    location: 'Pune district',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1519337265831-281ec6cc8514?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '6 hr ago',
     meta: 'Disease watch',
     likes: 118,
@@ -144,6 +177,11 @@ export const feedItems: FeedItem[] = [
     author: 'KrishiMitra Tips',
     authorHandle: '@krishimitra',
     authorInitials: 'KM',
+    location: 'Ahmednagar, MH',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1499397216897-1e9eff52b57b?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '8 hr ago',
     meta: 'Water-saving',
     likes: 53,
@@ -160,6 +198,11 @@ export const feedItems: FeedItem[] = [
     author: 'Cotton Research Pune',
     authorHandle: '@crip',
     authorInitials: 'CR',
+    location: 'Vidarbha belt',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1545239351-1141bd82e8a6?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1516022751332-0ca15fae07bf?auto=format&fit=crop&w=1200&q=80',
     timeAgo: 'Yesterday',
     meta: 'Pest advisory',
     likes: 88,
@@ -176,6 +219,11 @@ export const feedItems: FeedItem[] = [
     author: 'Krishi Jagran',
     authorHandle: '@krishijagran',
     authorInitials: 'KJ',
+    location: 'Maharashtra',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1200&q=80',
     timeAgo: 'Yesterday',
     meta: 'Farming news',
     likes: 134,
@@ -192,6 +240,11 @@ export const feedItems: FeedItem[] = [
     author: 'Govt of India',
     authorHandle: '@pmkisan',
     authorInitials: 'PK',
+    location: 'Kerala & Maharashtra',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1498842812179-c81beecf902c?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '2 d ago',
     meta: 'Government',
     likes: 206,
@@ -208,6 +261,11 @@ export const feedItems: FeedItem[] = [
     author: 'Baramati FPO',
     authorHandle: '@baramati_fpo',
     authorInitials: 'BF',
+    location: 'Baramati',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1507537297725-24a1c029d3ca?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1491380661544-5cc29cf13949?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '2 d ago',
     meta: 'Community event',
     likes: 301,
@@ -224,6 +282,11 @@ export const feedItems: FeedItem[] = [
     author: 'KrishiMitra Tips',
     authorHandle: '@krishimitra',
     authorInitials: 'KM',
+    location: 'Soybean belt',
+    avatarUrl:
+      'https://images.unsplash.com/photo-1562158070-2d5b0eeab832?auto=format&fit=crop&w=120&q=80',
+    imageUrl:
+      'https://images.unsplash.com/photo-1465101162946-4377e57745c3?auto=format&fit=crop&w=1200&q=80',
     timeAgo: '3 d ago',
     meta: 'Agronomy',
     likes: 44,

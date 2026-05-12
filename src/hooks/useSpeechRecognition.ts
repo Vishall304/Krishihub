@@ -83,8 +83,16 @@ export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitio
 
       const recognition = new Ctor()
       recognition.lang = lang || defaultLang
-      recognition.continuous = true
+      recognition.continuous = false
       recognition.interimResults = true
+      // better Hindi/Marathi accuracy
+      if (recognition.lang.includes('hi')) {
+      recognition.lang = 'hi-IN'
+      }
+
+      if (recognition.lang.includes('mr')) {
+      recognition.lang = 'mr-IN'
+      }
       recognition.maxAlternatives = 1
 
       recognition.onstart = () => {
@@ -96,8 +104,19 @@ export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitio
 
       recognition.onend = () => {
         setInterim('')
-        setStatus((prev) => (prev === 'listening' ? 'idle' : prev))
+
+  // auto restart if not manually stopped
+        if (!manuallyStoppedRef.current) {
+          try {
+            recognition.start()
+            return
+          } catch {
+      // ignore restart errors
+        }
       }
+
+      setStatus('idle')
+  }
 
       recognition.onerror = (e) => {
         const code = e?.error ?? 'unknown'
@@ -123,20 +142,20 @@ export function useSpeechRecognition(defaultLang = 'en-IN'): UseSpeechRecognitio
         let finalText = ''
         let interimText = ''
 
-        for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
-          const item = ev.results[i]
-          const text = item?.[0]?.transcript ?? ''
+        for (let i = 0; i < ev.results.length; i += 1) {
+          const result = ev.results[i]
+          const text = result?.[0]?.transcript ?? ''
 
-          if (item?.isFinal) finalText += text
-          else interimText += text
+          if (result.isFinal) {
+           finalText += `${text} `
+          } else {
+           interimText += text
+          }
         }
 
-        if (finalText.trim()) {
-          setTranscript((prev) => `${prev} ${finalText}`.trim())
-        }
-
-        setInterim(interimText.trim())
-      }
+      setTranscript(finalText.trim())
+      setInterim(interimText.trim())
+    }
 
       recognitionRef.current = recognition
 

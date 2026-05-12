@@ -39,19 +39,6 @@ const iconMap: Record<FeedItem['IconKey'], LucideIcon> = {
   stethoscope: Stethoscope,
 }
 
-const kindBadgeTint: Record<FeedItemKind, string> = {
-  news: 'bg-teal-50 text-teal-700 ring-teal-100',
-  scheme: 'bg-violet-50 text-violet-700 ring-violet-100',
-  tips: 'bg-green-50 text-green-700 ring-green-100',
-  market: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
-  weather: 'bg-sky-50 text-sky-700 ring-sky-100',
-  irrigation: 'bg-cyan-50 text-cyan-700 ring-cyan-100',
-  fertilizer: 'bg-lime-50 text-lime-800 ring-lime-100',
-  pest: 'bg-amber-50 text-amber-800 ring-amber-100',
-  community: 'bg-rose-50 text-rose-700 ring-rose-100',
-  disease: 'bg-red-50 text-red-700 ring-red-100',
-}
-
 type Filter = 'all' | FeedItemKind
 
 const filterKeys: Filter[] = [
@@ -198,7 +185,26 @@ const text = {
       disease: 'रोग माहिती',
     },
   },
-} satisfies Record<AppLanguage, unknown>
+} satisfies Record<AppLanguage, {
+  welcome: string
+  dashboard: string
+  season: string
+  kisanFeed: string
+  post: string
+  posts: string
+  noPosts: string
+  askAI: string
+  quick: {
+    detect: string
+    detectTip: string
+    ai: string
+    aiTip: string
+    reminder: string
+    reminderTip: string
+  }
+  filters: Record<Filter, string>
+  kinds: Record<FeedItemKind, string>
+}>
 
 type Props = {
   onNavigate: (tab: TabId) => void
@@ -221,6 +227,7 @@ function FeedCard({
   const Icon = iconMap[item.IconKey]
   const [liked, setLiked] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [imageError, setImageError] = useState(false)
   const t = getT(lang)
 
   return (
@@ -229,102 +236,113 @@ function FeedCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index, 6) * 0.04 }}
-      className="overflow-hidden rounded-3xl border border-green-100 bg-white shadow-sm transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md"
+      className="group overflow-hidden rounded-3xl border border-green-100 bg-white shadow-sm transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md"
       data-testid={`feed-card-${item.id}`}
     >
-      <header className="flex items-center gap-3 px-4 pt-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-sm font-bold text-white ring-2 ring-white">
-          {item.authorInitials}
-        </div>
+      <div className="relative overflow-hidden">
+        {imageError ? (
+          <div className={`h-56 w-full bg-gradient-to-br ${item.gradient} flex items-center justify-center sm:h-64`}>
+            <Icon className="h-20 w-20 drop-shadow-lg text-white" strokeWidth={1.6} />
+          </div>
+        ) : (
+          <img
+            src={item.imageUrl}
+            alt={item.title}
+            onError={() => setImageError(true)}
+            className="h-56 w-full object-cover transition duration-500 ease-out group-hover:scale-105 sm:h-64"
+          />
+        )}
 
-        <div className="min-w-0 flex-1 text-left">
-          <p className="truncate text-sm font-semibold text-slate-900">{item.author}</p>
-          <p className="truncate text-xs text-slate-500">
-            {item.authorHandle} · {item.timeAgo}
-          </p>
-        </div>
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/20 to-transparent" />
 
-        <span
-          className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ring-1 ${kindBadgeTint[item.kind]}`}
-        >
+        <div className="absolute left-4 top-4 inline-flex items-center gap-2 rounded-full bg-white/95 px-3 py-2 text-xs font-semibold text-slate-900 shadow-sm">
+          <Icon className="h-4 w-4 text-green-700" strokeWidth={2} aria-hidden />
           {t.kinds[item.kind]}
-        </span>
-      </header>
-
-      <div
-        className={`relative mx-4 mt-3 flex aspect-[5/3] items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br ${item.gradient} text-white`}
-        aria-hidden
-      >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.2),transparent_60%)]" />
-        <Icon className="relative h-20 w-20 drop-shadow-lg" strokeWidth={1.6} />
+        </div>
 
         {item.meta && (
-          <span className="absolute bottom-3 left-3 rounded-full bg-white/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white backdrop-blur">
+          <span className="absolute right-4 top-4 rounded-full bg-green-700/95 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white shadow-sm">
             {item.meta}
           </span>
         )}
       </div>
 
-      <div className="px-4 pb-3 pt-3">
-        <h4 className="text-[15px] font-bold leading-snug text-slate-900">{item.title}</h4>
-        <p className="mt-1 text-sm leading-relaxed text-slate-600">{item.description}</p>
+      <div className="px-4 pb-4 pt-4">
+        <div className="flex items-start gap-3">
+          <img
+            src={item.avatarUrl}
+            alt={`${item.author} avatar`}
+            className="h-11 w-11 flex-shrink-0 rounded-full object-cover ring-1 ring-green-100"
+          />
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-slate-900">{item.author}</p>
+            <p className="truncate text-[13px] text-slate-500">
+              {item.location} · {item.timeAgo}
+            </p>
+          </div>
+        </div>
+
+        <h4 className="mt-4 text-lg font-bold tracking-tight text-slate-900">{item.title}</h4>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600">{item.description}</p>
+
+        <footer className="mt-4 flex flex-wrap items-center gap-2 border-t border-green-50 pt-3">
+          <button
+            type="button"
+            onClick={() => setLiked((v) => !v)}
+            aria-label={liked ? 'Unlike post' : 'Like post'}
+            data-testid={`feed-like-${item.id}`}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition duration-200 ease-out ${
+              liked ? 'text-rose-600' : 'text-slate-600 hover:text-rose-500'
+            }`}
+          >
+            <Heart
+              className="h-5 w-5"
+              strokeWidth={liked ? 0 : 2}
+              fill={liked ? 'currentColor' : 'none'}
+              aria-hidden
+            />
+            <span>{item.likes + (liked ? 1 : 0)}</span>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Comments"
+            data-testid={`feed-comments-${item.id}`}
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-600 transition duration-200 ease-out hover:scale-105 hover:text-green-700"
+          >
+            <MessageCircle className="h-5 w-5" strokeWidth={2} aria-hidden />
+            <span>{item.comments}</span>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Share"
+            data-testid={`feed-share-${item.id}`}
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-600 transition duration-200 ease-out hover:scale-105 hover:text-green-700"
+          >
+            <SendIcon className="h-5 w-5" strokeWidth={2} aria-hidden />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSaved((v) => !v)}
+            aria-label={saved ? 'Remove bookmark' : 'Save post'}
+            data-testid={`feed-save-${item.id}`}
+            className={`ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition duration-200 ease-out ${
+              saved ? 'text-green-700' : 'text-slate-600 hover:text-green-700'
+            }`}
+          >
+            <Bookmark
+              className="h-5 w-5"
+              strokeWidth={saved ? 0 : 2}
+              fill={saved ? 'currentColor' : 'none'}
+              aria-hidden
+            />
+            <span>{saved ? 'Saved' : 'Save'}</span>
+          </button>
+        </footer>
       </div>
-
-      <footer className="flex items-center gap-1 border-t border-green-50 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => setLiked((v) => !v)}
-          aria-label={liked ? 'Unlike post' : 'Like post'}
-          data-testid={`feed-like-${item.id}`}
-          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition duration-200 ease-out hover:scale-105 ${
-            liked ? 'text-rose-600' : 'text-slate-600 hover:text-rose-500'
-          }`}
-        >
-          <Heart
-            className="h-5 w-5"
-            strokeWidth={liked ? 0 : 2}
-            fill={liked ? 'currentColor' : 'none'}
-            aria-hidden
-          />
-          <span>{item.likes + (liked ? 1 : 0)}</span>
-        </button>
-
-        <button
-          type="button"
-          aria-label="Comments"
-          data-testid={`feed-comments-${item.id}`}
-          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-600 transition duration-200 ease-out hover:scale-105 hover:text-green-700"
-        >
-          <MessageCircle className="h-5 w-5" strokeWidth={2} aria-hidden />
-          <span>{item.comments}</span>
-        </button>
-
-        <button
-          type="button"
-          aria-label="Share"
-          data-testid={`feed-share-${item.id}`}
-          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-600 transition duration-200 ease-out hover:scale-105 hover:text-green-700"
-        >
-          <SendIcon className="h-5 w-5" strokeWidth={2} aria-hidden />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSaved((v) => !v)}
-          aria-label={saved ? 'Remove bookmark' : 'Save post'}
-          data-testid={`feed-save-${item.id}`}
-          className={`ml-auto inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold transition duration-200 ease-out hover:scale-105 ${
-            saved ? 'text-green-700' : 'text-slate-600 hover:text-green-700'
-          }`}
-        >
-          <Bookmark
-            className="h-5 w-5"
-            strokeWidth={saved ? 0 : 2}
-            fill={saved ? 'currentColor' : 'none'}
-            aria-hidden
-          />
-        </button>
-      </footer>
     </motion.article>
   )
 }

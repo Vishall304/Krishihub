@@ -1,99 +1,142 @@
 import { motion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
-import { Camera, ClipboardList, Home, Sparkles, UserCircle } from 'lucide-react'
+
+import {
+  Camera,
+  ClipboardList,
+  Home,
+  Sparkles,
+  UserCircle,
+} from 'lucide-react'
+
 import type { TabId } from '../../types'
-import type { AppLanguage } from '../../types/models'
+
+type Language = 'en' | 'hi' | 'mr'
 
 type TabDef = {
   id: TabId
+  label: Record<Language, string>
   Icon: LucideIcon
 }
 
 const leftTabs: TabDef[] = [
-  { id: 'home', Icon: Home },
-  { id: 'detect', Icon: Camera },
+  {
+    id: 'home',
+    label: {
+      en: 'Home',
+      hi: 'होम',
+      mr: 'मुख्य',
+    },
+    Icon: Home,
+  },
+
+  {
+    id: 'detect',
+    label: {
+      en: 'Detect',
+      hi: 'डिटेक्ट',
+      mr: 'तपासा',
+    },
+    Icon: Camera,
+  },
 ]
 
 const rightTabs: TabDef[] = [
-  { id: 'tracker', Icon: ClipboardList },
-  { id: 'profile', Icon: UserCircle },
-]
+  {
+    id: 'tracker',
+    label: {
+      en: 'Tracker',
+      hi: 'ट्रैकर',
+      mr: 'ट्रॅकर',
+    },
+    Icon: ClipboardList,
+  },
 
-const labels: Record<AppLanguage, Record<TabId, string>> = {
-  en: {
-    home: 'Home',
-    detect: 'Detect crop',
-    ai: 'AI assistant',
-    tracker: 'Activity tracker',
-    profile: 'Profile',
+  {
+    id: 'profile',
+    label: {
+      en: 'Profile',
+      hi: 'प्रोफाइल',
+      mr: 'प्रोफाइल',
+    },
+    Icon: UserCircle,
   },
-  hi: {
-    home: 'होम',
-    detect: 'फसल जांच',
-    ai: 'AI सहायक',
-    tracker: 'गतिविधि',
-    profile: 'प्रोफाइल',
-  },
-  mr: {
-    home: 'होम',
-    detect: 'पीक तपासणी',
-    ai: 'AI सहाय्यक',
-    tracker: 'नोंदी',
-    profile: 'प्रोफाइल',
-  },
-}
+]
 
 type Props = {
   active: TabId
   onChange: (id: TabId) => void
-  lang?: AppLanguage
+  lang?: Language
 }
 
-const iconTap = 'h-6 w-6 shrink-0 transition-colors duration-200'
+const iconTap =
+  'h-6 w-6 shrink-0 transition-colors duration-200'
 
 function TabButton({
   tab,
   active,
   onChange,
-  label,
+  lang = 'en',
 }: {
   tab: TabDef
   active: TabId
   onChange: (id: TabId) => void
-  label: string
+  lang?: Language
 }) {
   const isActive = active === tab.id
+
   const Icon = tab.Icon
 
   return (
     <button
       type="button"
       onClick={() => onChange(tab.id)}
-      title={label}
-      aria-label={label}
+      title={tab.label[lang]}
+      aria-label={tab.label[lang]}
       aria-current={isActive ? 'page' : undefined}
-      data-testid={`nav-${tab.id}-btn`}
-      className="group flex min-w-0 flex-1 flex-col items-center justify-end pb-2 pt-1 text-slate-500 transition active:scale-95 data-[active=true]:text-green-800"
-      data-active={isActive}
+      className="group flex min-w-0 flex-1 flex-col items-center justify-end pb-2 pt-1 text-slate-500 transition active:scale-95"
     >
       <span
         className={[
           'inline-flex h-11 w-11 items-center justify-center rounded-2xl transition duration-200 ease-out',
-          'hover:scale-105 hover:text-green-700',
+
           isActive
             ? 'bg-green-100 text-green-800 shadow-sm ring-1 ring-green-200/80'
             : 'bg-slate-100 text-slate-500 group-hover:bg-green-50',
         ].join(' ')}
       >
-        <Icon className={iconTap} strokeWidth={isActive ? 2.25 : 2} aria-hidden />
+        <Icon
+          className={iconTap}
+          strokeWidth={isActive ? 2.25 : 2}
+        />
+      </span>
+
+      <span
+        className={`mt-1 text-[11px] font-semibold ${
+          isActive
+            ? 'text-green-800'
+            : 'text-slate-500'
+        }`}
+      >
+        {tab.label[lang]}
       </span>
     </button>
   )
 }
 
-export function BottomNav({ active, onChange, lang = 'en' }: Props) {
+export function BottomNav({
+  active,
+  onChange,
+  lang = 'en',
+}: Props) {
   const aiActive = active === 'ai'
-  const t = labels[lang] ?? labels.en
+
+  const aiLabel =
+    lang === 'hi'
+      ? 'एआई'
+      : lang === 'mr'
+        ? 'एआय'
+        : 'AI'
 
   return (
     <nav
@@ -101,34 +144,37 @@ export function BottomNav({ active, onChange, lang = 'en' }: Props) {
       aria-label="Primary"
     >
       <div className="mx-auto flex max-w-lg items-end justify-between gap-0.5 px-1">
+
         {leftTabs.map((tab) => (
           <TabButton
             key={tab.id}
             tab={tab}
             active={active}
             onChange={onChange}
-            label={t[tab.id]}
+            lang={lang}
           />
         ))}
 
         <div className="relative flex w-[4.5rem] shrink-0 flex-col items-center pb-2">
+
           <motion.button
             type="button"
             onClick={() => onChange('ai')}
-            title={t.ai}
-            aria-label={t.ai}
-            aria-current={aiActive ? 'page' : undefined}
-            data-testid="nav-ai-btn"
             whileTap={{ scale: 0.94 }}
             className={[
               'absolute -top-9 flex h-[4.25rem] w-[4.25rem] items-center justify-center rounded-full text-white shadow-xl ring-4 transition duration-200 ease-out',
-              'hover:scale-105 hover:ring-green-50',
-              aiActive ? 'bg-green-600 ring-green-100' : 'bg-green-500 ring-white hover:bg-green-600',
+
+              aiActive
+                ? 'bg-green-600 ring-green-100'
+                : 'bg-green-500 ring-white hover:bg-green-600',
             ].join(' ')}
           >
-            <Sparkles className="h-7 w-7 drop-shadow" strokeWidth={2} aria-hidden />
+            <Sparkles className="h-7 w-7" />
           </motion.button>
-          <span className="h-[11px]" aria-hidden />
+
+          <span className="mt-8 text-[11px] font-semibold text-green-800">
+            {aiLabel}
+          </span>
         </div>
 
         {rightTabs.map((tab) => (
@@ -137,7 +183,7 @@ export function BottomNav({ active, onChange, lang = 'en' }: Props) {
             tab={tab}
             active={active}
             onChange={onChange}
-            label={t[tab.id]}
+            lang={lang}
           />
         ))}
       </div>
