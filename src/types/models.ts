@@ -58,14 +58,28 @@ export type ActivityRecord = {
   createdAt: Date
 }
 
+export type ReminderRepeat = 'once' | 'daily' | 'weekly' | 'monthly'
+
+export type ReminderCategory =
+  | 'irrigation'
+  | 'fertilizer'
+  | 'pesticide'
+  | 'harvest'
+  | 'disease check'
+  | 'market visit'
+  | 'weather check'
+  | 'other'
+
 export type ReminderRecord = {
   id: string
   userId: string
   title: string
-  description: string
+  cropName: string
+  notes: string
   reminderDate: string
   reminderTime: string
-  type: string
+  repeat: ReminderRepeat
+  type: ReminderCategory
   status: 'pending' | 'done'
   createdAt: Date
 }

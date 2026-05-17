@@ -4,7 +4,6 @@ import {
   deleteDoc,
   doc,
   getDocs,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -48,7 +47,8 @@ export async function addActivity(input: {
 export async function fetchActivitiesForUser(userId: string): Promise<ActivityRecord[]> {
   try {
     const col = collection(getFirestoreDb(), ACTIVITIES)
-    const q = query(col, where('userId', '==', userId), orderBy('createdAt', 'desc'))
+    // Avoid composite index: only single equality filter, sort client-side
+    const q = query(col, where('userId', '==', userId))
     const snap = await getDocs(q)
     const rows = snap.docs.map((d) => {
       const data = d.data() as Record<string, unknown>
@@ -64,6 +64,8 @@ export async function fetchActivitiesForUser(userId: string): Promise<ActivityRe
         createdAt: tsToDate(data.createdAt as Timestamp | undefined),
       }
     })
+    // Client-side sort: newest first
+    rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
     firestoreDevLog.ok(ACTIVITIES, 'fetch', { userId, count: rows.length })
     return rows
   } catch (e) {
@@ -71,6 +73,7 @@ export async function fetchActivitiesForUser(userId: string): Promise<ActivityRe
     throw e
   }
 }
+
 
 export async function updateActivity(
   userId: string,

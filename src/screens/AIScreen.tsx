@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Mic, MicOff, Send, Square } from 'lucide-react'
+import { Mic, MicOff, Send, Square, Volume2 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useAuth } from '../hooks/useAuth'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { fetchChatHistoryForUser, saveChatTurn } from '../services/chatHistoryService'
 import { sendChatMessage } from '../services/aiService'
 import { fetchBestWeather, type WeatherSnapshot } from '../services/weatherService'
+import { speakOnce, type SpeakLang } from '../lib/voiceUtils'
 import type { ChatHistoryRecord } from '../types/models'
 import type { ChatMessage } from '../types'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const welcomeByLanguage: Record<'en' | 'hi' | 'mr', string> = {
   en: 'Namaste! I am KrishiMitra AI. Ask about pests, fertilizer doses, sowing dates, irrigation, or mandi prices — in English, हिंदी, or मराठी.',
@@ -20,6 +25,13 @@ const voiceLangMap: Record<'en' | 'hi' | 'mr', string> = {
   hi: 'hi-IN',
   mr: 'mr-IN',
 }
+
+// Debounce before auto-sending a voice transcript (ms)
+const VOICE_SEND_DEBOUNCE_MS = 1100
+
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
 
 function normaliseLang(l?: string): 'en' | 'hi' | 'mr' {
   const v = (l ?? '').toLowerCase().trim()
@@ -76,14 +88,24 @@ function weatherLine(w: WeatherSnapshot): string {
   return `Current weather near farmer: ${w.place}, ${w.tempC}°C, ${w.condition}, humidity ${w.humidity}%, rain chance ${w.rainChance}%.`
 }
 
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export function AIScreen() {
   const { user, profile } = useAuth()
   const inputId = useId()
   const scrollRef = useRef<HTMLDivElement>(null)
   const langCode = normaliseLang(profile?.preferredLanguage)
   const sessionIdRef = useRef<string | undefined>(undefined)
+
+  // Voice-send deduplication
   const lastVoiceTranscriptRef = useRef('')
-  const voiceSendTimerRef = useRef<number | null>(null)
+  const voiceSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Use a ref for sending state so closures inside timeout see the latest value
+  const sendingRef = useRef(false)
+  // Cancel TTS on unmount
+  const cancelSpeakRef = useRef<(() => void) | null>(null)
 
   const welcome: ChatMessage = useMemo(
     () => ({ id: 'welcome', role: 'assistant', lang: 'KrishiMitra', text: welcomeByLanguage[langCode] }),
@@ -100,43 +122,39 @@ export function AIScreen() {
   const voice = useSpeechRecognition(voiceLangMap[langCode])
   const canSend = useMemo(() => text.trim().length > 0 && !sending, [text, sending])
 
+  // -------------------------------------------------------------------------
+  // Scroll helper
+  // -------------------------------------------------------------------------
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
     })
   }, [])
-  function cleanForVoice(value: string): string {
-  return value
-    .replace(/\*\*/g, '')
-    .replace(/[*•#_`~>-]/g, ' ')
-    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-    .replace(/\n+/g, '. ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  }
 
-  const speakText = useCallback((replyText: string, lang: 'en' | 'hi' | 'mr') => {
-    if (!('speechSynthesis' in window)) return
+  // -------------------------------------------------------------------------
+  // TTS helper — delegates to shared speakOnce
+  // -------------------------------------------------------------------------
+  const speakText = useCallback(async (replyText: string, lang: SpeakLang) => {
+    // Cancel current speech before starting new (prevents overlap)
+    cancelSpeakRef.current?.()
+    setSpeaking(false)
 
-    window.speechSynthesis.cancel()
-
-    const utterance = new SpeechSynthesisUtterance(cleanForVoice(replyText))
-    utterance.lang = voiceLangMap[lang]
-    utterance.rate = 0.95
-    utterance.pitch = 1
-    utterance.volume = 1
-
-    utterance.onstart = () => setSpeaking(true)
-    utterance.onend = () => setSpeaking(false)
-    utterance.onerror = () => setSpeaking(false)
-
-    window.speechSynthesis.speak(utterance)
+    const cancel = await speakOnce(
+      replyText,
+      lang,
+      () => setSpeaking(true),
+      () => setSpeaking(false),
+    )
+    cancelSpeakRef.current = cancel
   }, [])
 
+  // -------------------------------------------------------------------------
+  // sendMessage
+  // -------------------------------------------------------------------------
   const sendMessage = useCallback(
     async (rawText?: string) => {
       const t = (rawText ?? text).trim()
-      if (!t || !user || sending) return
+      if (!t || !user || sendingRef.current) return
 
       const messageLang = detectMessageLang(t, langCode)
 
@@ -150,6 +168,7 @@ export function AIScreen() {
       setMessages((prev) => [...prev, userMsg])
       setText('')
       setSending(true)
+      sendingRef.current = true
       scrollToBottom()
 
       try {
@@ -179,7 +198,7 @@ export function AIScreen() {
 
         setMessages((prev) => [...prev, assistantMsg])
         scrollToBottom()
-        speakText(res.reply, messageLang)
+        void speakText(res.reply, messageLang)
 
         void saveChatTurn({
           userId: user.uid,
@@ -189,59 +208,68 @@ export function AIScreen() {
         }).catch((e) => import.meta.env.DEV && console.error('[AIScreen] saveChatTurn', e))
       } finally {
         setSending(false)
+        sendingRef.current = false
       }
     },
-    [text, user, sending, langCode, messages, scrollToBottom, weather, speakText],
+    [text, user, langCode, messages, scrollToBottom, weather, speakText],
   )
 
+  // -------------------------------------------------------------------------
+  // Effects
+  // -------------------------------------------------------------------------
+
+  // Weather
   useEffect(() => {
     void fetchBestWeather().then(setWeather).catch(() => setWeather(null))
   }, [])
 
+  // Cleanup TTS and timers on unmount
   useEffect(() => {
-  return () => {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
-
-    if (voiceSendTimerRef.current) {
-      window.clearTimeout(voiceSendTimerRef.current)
+    return () => {
+      cancelSpeakRef.current?.()
+      if (voiceSendTimerRef.current) clearTimeout(voiceSendTimerRef.current)
     }
-  }
-}, [])
+  }, [])
 
+  // Sync voice transcript → text input (show what was heard)
   useEffect(() => {
-  const finalText = voice.transcript.trim()
-  if (!finalText) return
+    const finalText = voice.transcript.trim()
+    if (!finalText) return
+    setText(finalText)
+  }, [voice.transcript])
 
-  setText(finalText)
-}, [voice.transcript])
-
+  // Auto-send when voice reaches 'processing' state
   useEffect(() => {
-  const finalText = voice.transcript.trim()
+    const finalText = voice.transcript.trim()
 
-  if (voice.status !== 'idle' || !finalText || sending) return
-
-  if (voiceSendTimerRef.current) {
-    window.clearTimeout(voiceSendTimerRef.current)
-  }
-
-  voiceSendTimerRef.current = window.setTimeout(() => {
-    const stableText = voice.transcript.trim()
-
-    if (!stableText) return
-
-    void sendMessage(stableText)
-
-    voice.reset()
-    lastVoiceTranscriptRef.current = ''
-  }, 900)
-
-  return () => {
-    if (voiceSendTimerRef.current) {
-      window.clearTimeout(voiceSendTimerRef.current)
+    // Only trigger when processing & have text & no interim & not already sending
+    if (voice.status !== 'processing' || !finalText || voice.interim.trim() || sendingRef.current) {
+      return
     }
-  }
-}, [voice.status, voice.transcript, sending, sendMessage, voice])
 
+    // Deduplicate: don't resend the same transcript
+    if (lastVoiceTranscriptRef.current === finalText) return
+    lastVoiceTranscriptRef.current = finalText
+
+    // Clear any pending timer
+    if (voiceSendTimerRef.current) clearTimeout(voiceSendTimerRef.current)
+
+    voiceSendTimerRef.current = setTimeout(() => {
+      // Double-check conditions are still valid inside the callback
+      const stableText = voice.transcript.trim()
+      if (!stableText || stableText !== finalText || sendingRef.current) return
+
+      void sendMessage(stableText)
+      voice.reset()
+      lastVoiceTranscriptRef.current = ''
+    }, VOICE_SEND_DEBOUNCE_MS)
+
+    return () => {
+      if (voiceSendTimerRef.current) clearTimeout(voiceSendTimerRef.current)
+    }
+  }, [voice.status, voice.transcript, voice.interim, sendMessage, voice])
+
+  // Load chat history
   const loadHistory = useCallback(async () => {
     if (!user) return
     setHistoryLoading(true)
@@ -262,17 +290,17 @@ export function AIScreen() {
     void loadHistory()
   }, [loadHistory])
 
+  // -------------------------------------------------------------------------
+  // Voice toggle
+  // -------------------------------------------------------------------------
   const toggleVoice = useCallback(() => {
     if (!voice.supported) return
 
-    if (voice.status === 'listening') {
-      if (voiceSendTimerRef.current) {
-    window.clearTimeout(voiceSendTimerRef.current)
-  }
-
+    if (voice.status === 'listening' || voice.status === 'restarting') {
+      if (voiceSendTimerRef.current) clearTimeout(voiceSendTimerRef.current)
       voice.stop()
       return
-      }
+    }
 
     setText('')
     lastVoiceTranscriptRef.current = ''
@@ -280,16 +308,25 @@ export function AIScreen() {
     voice.start({ lang: voiceLangMap[langCode] })
   }, [voice, langCode])
 
+  // -------------------------------------------------------------------------
+  // Derived UI state
+  // -------------------------------------------------------------------------
+  const isListening = voice.status === 'listening' || voice.status === 'restarting'
+
   const micButtonClass = (() => {
     if (!voice.supported) return 'bg-slate-100 text-slate-400 cursor-not-allowed'
-    if (voice.status === 'listening') return 'bg-red-500 text-white shadow-md ring-2 ring-red-200 animate-pulse'
+    if (isListening) return 'bg-red-500 text-white shadow-md ring-2 ring-red-200 animate-pulse'
     return 'bg-green-100 text-green-800 hover:scale-105 hover:bg-green-200 hover:text-green-900 active:scale-95'
   })()
 
-  const MicIcon = voice.supported ? (voice.status === 'listening' ? Square : Mic) : MicOff
+  const MicIcon = voice.supported ? (isListening ? Square : Mic) : MicOff
+
+  // Show interim in textarea while listening
+  const textareaValue = isListening && voice.interim ? voice.interim : text
 
   return (
     <div className="flex min-h-[calc(100dvh-8rem)] flex-col pb-28 pt-2">
+      {/* Info banner */}
       <div className="mb-3 rounded-3xl border border-green-100 bg-white px-4 py-3 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-green-700">AI assistant</p>
         <p className="text-sm text-slate-600">
@@ -304,13 +341,26 @@ export function AIScreen() {
 
         {voice.status === 'listening' && (
           <p className="mt-2 rounded-xl bg-green-50 px-3 py-1.5 text-xs font-medium text-green-800 ring-1 ring-green-100">
-            Listening… speak now.
+            🎙️ Listening… speak now.
+          </p>
+        )}
+
+        {voice.status === 'restarting' && (
+          <p className="mt-2 rounded-xl bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-800 ring-1 ring-blue-100">
+            ↺ Reconnecting microphone…
+          </p>
+        )}
+
+        {voice.status === 'processing' && (
+          <p className="mt-2 rounded-xl bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+            Processing speech… sending shortly.
           </p>
         )}
 
         {historyLoading && <p className="mt-1 text-xs text-slate-500">Loading your past chats…</p>}
       </div>
 
+      {/* Chat log */}
       <div
         ref={scrollRef}
         className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto rounded-3xl bg-[#e8f7ec] px-3 pb-28 pt-4 [-webkit-overflow-scrolling:touch]"
@@ -341,7 +391,8 @@ export function AIScreen() {
           </motion.div>
         ))}
 
-        {voice.status === 'listening' && voice.interim && (
+        {/* Interim transcript bubble */}
+        {isListening && voice.interim && (
           <div className="flex justify-end">
             <div className="max-w-[85%] rounded-2xl rounded-br-md bg-green-500/80 px-4 py-3 text-[15px] leading-relaxed text-white shadow-md">
               {voice.interim}
@@ -349,6 +400,7 @@ export function AIScreen() {
           </div>
         )}
 
+        {/* Typing indicator */}
         {sending && (
           <div className="flex justify-start" data-testid="ai-typing-indicator">
             <div className="rounded-2xl rounded-bl-md border border-green-100 bg-white px-4 py-3 text-slate-500 shadow-sm">
@@ -361,15 +413,18 @@ export function AIScreen() {
           </div>
         )}
 
+        {/* Speaking indicator */}
         {speaking && (
           <div className="flex justify-start" data-testid="ai-speaking-indicator">
-            <div className="rounded-2xl rounded-bl-md border border-green-100 bg-white px-4 py-2 text-sm font-medium text-green-700 shadow-sm">
-              🔊 KrishiMitra बोल रहा है...
+            <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-green-100 bg-white px-4 py-2 text-sm font-medium text-green-700 shadow-sm">
+              <Volume2 className="h-4 w-4 animate-pulse" />
+              KrishiMitra बोल रहा है…
             </div>
           </div>
         )}
       </div>
 
+      {/* Input bar */}
       <div className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-0 right-0 z-30 mx-auto max-w-lg px-3">
         <div className="flex items-end gap-2 rounded-3xl border border-green-100 bg-white p-2 shadow-xl shadow-green-900/10">
           <label htmlFor={inputId} className="sr-only">
@@ -379,7 +434,7 @@ export function AIScreen() {
           <textarea
             id={inputId}
             rows={1}
-            value={voice.status === 'listening' && voice.interim ? voice.interim : text}
+            value={textareaValue}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -387,8 +442,8 @@ export function AIScreen() {
                 void sendMessage()
               }
             }}
-            placeholder={voice.status === 'listening' ? 'Listening…' : 'Message… / संदेश… / संदेश…'}
-            readOnly={voice.status === 'listening'}
+            placeholder={isListening ? 'Listening…' : 'Message… / संदेश… / संदेश…'}
+            readOnly={isListening}
             data-testid="ai-input"
             className="max-h-28 min-h-[48px] flex-1 resize-none rounded-2xl bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none ring-0 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-green-500"
           />
@@ -397,9 +452,15 @@ export function AIScreen() {
             type="button"
             onClick={toggleVoice}
             disabled={!voice.supported}
-            title={!voice.supported ? 'Voice input not supported' : voice.status === 'listening' ? 'Stop listening' : 'Speak your question'}
-            aria-label={voice.status === 'listening' ? 'Stop listening' : 'Speak your question'}
-            aria-pressed={voice.status === 'listening'}
+            title={
+              !voice.supported
+                ? 'Voice input not supported'
+                : isListening
+                  ? 'Stop listening'
+                  : 'Speak your question'
+            }
+            aria-label={isListening ? 'Stop listening' : 'Speak your question'}
+            aria-pressed={isListening}
             data-testid="ai-voice-btn"
             className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition duration-200 ease-out ${micButtonClass}`}
           >

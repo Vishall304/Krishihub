@@ -16,6 +16,7 @@ import { useAuth } from '../hooks/useAuth'
 import { analyzeCropImage, type DiseaseResult } from '../services/diseaseService'
 import { fetchBestWeather, type WeatherSnapshot } from '../services/weatherService'
 import { normaliseLang } from '../services/aiService'
+import { speakOnce, cleanForVoice, type SpeakLang } from '../lib/voiceUtils'
 import type { ReactNode } from 'react'
 type Step = 'upload' | 'preview' | 'result'
 
@@ -104,12 +105,6 @@ const textMap = {
     backendError: 'AI तपासणी अयशस्वी झाली. Backend server चालू आहे का तपासा.',
   },
 }
-const voiceLangMap: Record<'en' | 'hi' | 'mr', string> = {
-  en: 'en-IN',
-  hi: 'hi-IN',
-  mr: 'mr-IN',
-}
-
 function generateSmartAdvice(disease: string, rainChance: number): string {
   let advice = ''
 
@@ -138,19 +133,26 @@ function generateSmartAdvice(disease: string, rainChance: number): string {
   return advice.trim()
 }
 
-function cleanForVoice(text: string): string {
-  return text
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    .replace(/[#_`~>|•▪■►]/g, '')
-    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-    .replace(/\d+\./g, '')
-    .replace(/:/g, '. ')
-    .replace(/[()]/g, ' ')
-    .replace(/\.{2,}/g, '.')
-    .replace(/\n+/g, '. ')
-    .replace(/\s+/g, ' ')
-    .trim()
+// cleanForVoice imported from voiceUtils
+
+function buildVoiceSummary(result: DiseaseResult, lang: 'en' | 'hi' | 'mr'): string {
+  const firstStep = result.next_steps?.[0] ?? ''
+
+  if (lang === 'hi') {
+    return [`फसल ${result.crop}`, `समस्या ${result.disease}`, `तात्कालिकता ${result.urgency}`]
+      .filter(Boolean)
+      .join('. ') + (firstStep ? `. अब ${cleanForVoice(firstStep)}` : '')
+  }
+
+  if (lang === 'mr') {
+    return [`पीक ${result.crop}`, `समस्या ${result.disease}`, `तातडी ${result.urgency}`]
+      .filter(Boolean)
+      .join('. ') + (firstStep ? `. आता ${cleanForVoice(firstStep)}` : '')
+  }
+
+  return [`Crop ${result.crop}`, `Disease ${result.disease}`, `Urgency ${result.urgency}`]
+    .filter(Boolean)
+    .join('. ') + (firstStep ? `. Now ${cleanForVoice(firstStep)}` : '')
 }
 
 type SectionProps = {
@@ -206,6 +208,7 @@ export function DetectScreen() {
   const [advice, setAdvice] = useState('')
 
   const [speaking, setSpeaking] = useState(false)
+  const cancelSpeakRef = useRef<(() => void) | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const langCode = normaliseLang(profile?.preferredLanguage)
@@ -214,77 +217,20 @@ export function DetectScreen() {
   useEffect(() => {
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl)
-
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel()
-      }
+      cancelSpeakRef.current?.()
     }
   }, [previewUrl])
 
-  const speakText = useCallback(async (text: string, lang: 'en' | 'hi' | 'mr') => {
-  if (!('speechSynthesis' in window)) return
-
-  window.speechSynthesis.cancel()
-  await new Promise((r) => setTimeout(r, 250))
-  const utterance = new SpeechSynthesisUtterance(
-    cleanForVoice(text),
-  )
-
-  utterance.lang = voiceLangMap[lang]
-
-  utterance.rate = 0.82
-  utterance.pitch = 1
-  utterance.volume = 1
-
-  if (lang === 'mr') {
-  utterance.rate = 0.78
-  }
-
-  if (lang === 'hi') {
-  utterance.rate = 0.8
-  }
-
-  const loadVoices = () =>
-  new Promise<SpeechSynthesisVoice[]>((resolve) => {
-    let voices = window.speechSynthesis.getVoices()
-
-    if (voices.length) {
-      resolve(voices)
-      return
-    }
-
-    window.speechSynthesis.onvoiceschanged = () => {
-      voices = window.speechSynthesis.getVoices()
-      resolve(voices)
-    }
-  })
-
-  const voices = await loadVoices()
-
-  const preferredVoice =
-    voices.find((v) =>
-      lang === 'mr'
-        ? v.lang.toLowerCase().includes('mr')
-        : lang === 'hi'
-          ? v.lang.toLowerCase().includes('hi')
-          : v.lang.toLowerCase().includes('en-in'),
-    ) ||
-    voices.find((v) =>
-      v.lang.toLowerCase().includes('en'),
-    ) ||
-    voices[0]
-
-  if (preferredVoice) {
-    utterance.voice = preferredVoice
-  }
-
-  utterance.onstart = () => setSpeaking(true)
-
-  utterance.onend = () => setSpeaking(false)
-
-  utterance.onerror = () => setSpeaking(false)
-
-  window.speechSynthesis.speak(utterance)
+  const speakText = useCallback(async (textToSpeak: string, lang: SpeakLang) => {
+    cancelSpeakRef.current?.()
+    setSpeaking(false)
+    const cancel = await speakOnce(
+      textToSpeak,
+      lang,
+      () => setSpeaking(true),
+      () => setSpeaking(false),
+    )
+    cancelSpeakRef.current = cancel
   }, [])
 
   const onFile = useCallback((file: File | null) => {
@@ -317,10 +263,8 @@ export function DetectScreen() {
     setAdvice('')
     setError(null)
 
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel()
-      
-    }
+    cancelSpeakRef.current?.()
+    setSpeaking(false)
 
     setPreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev)
@@ -362,12 +306,7 @@ export function DetectScreen() {
 
       setStep('result')
 
-      const voiceMsg =
-        langCode === 'hi'
-          ? `फसल ${aiResult.crop}. समस्या ${aiResult.disease}. सलाह ${smartAdvice}`
-          : langCode === 'mr'
-            ? `पीक ${aiResult.crop}. समस्या ${aiResult.disease}. सल्ला ${smartAdvice}`
-            : `${aiResult.crop}. ${aiResult.disease}. ${smartAdvice}`
+      const voiceMsg = buildVoiceSummary(aiResult, langCode)
 
       speakText(voiceMsg, langCode)
     } catch (err) {

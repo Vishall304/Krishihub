@@ -1,20 +1,24 @@
+/**
+ * TrackerScreen.tsx
+ * Stable, production-ready KrishiMitra farming tracker.
+ *
+ * KEY FIXES in this version:
+ *  1. Reminders and activities load correctly (no composite-index error)
+ *  2. Optimistic updates — reminder appears immediately on add (before Firestore confirms)
+ *  3. Alarm uses a stable ref — not re-created on every reminders state change
+ *  4. Activity section simplified — shows only completed reminder history
+ *  5. Notification permission requested on mount
+ *  6. All intervals/timeouts cleaned up properly
+ */
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import {
-  CheckCircle,
-  Clock,
-  Pencil,
-  PlusCircle,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { Clock, PlusCircle, TrendingUp, X, Bell, BellOff } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import {
   addActivity,
   deleteActivity,
   fetchActivitiesForUser,
-  updateActivity,
 } from '../services/activityService'
 import {
   addReminder,
@@ -23,517 +27,505 @@ import {
   updateReminder,
 } from '../services/reminderService'
 import { formatFirestoreError } from '../lib/firestoreErrors'
-import type { ActivityRecord, ReminderRecord } from '../types/models'
+import { normaliseLang } from '../services/aiService'
+import type { ActivityRecord, ReminderRecord, ReminderCategory, ReminderRepeat } from '../types/models'
+import { PremiumReminderModal, type ReminderFormData } from '../components/tracker/PremiumReminderModal'
+import { ReminderCards } from '../components/tracker/ReminderCards'
+import { ReminderHistory } from '../components/tracker/ReminderHistory'
+import { ReminderGraph } from '../components/tracker/ReminderGraph'
+import { AlarmPopup } from '../components/tracker/AlarmPopup'
+import {
+  buildVoiceMessage,
+  playAlarmBeep,
+  stopAlarm,
+  isReminderDueNow,
+  parseNaturalReminder,
+} from '../lib/reminderUtils'
+import {
+  canNotify,
+  notificationPermission,
+  requestNotificationPermission,
+  sendNotification,
+} from '../lib/notificationService'
 
-const presets = ['Irrigation done', 'Fertilizer added', 'Spray completed'] as const
-const presetToType = (title: string) => {
-  if (title.includes('Irrigation')) return 'irrigation'
-  if (title.includes('Fertilizer')) return 'fertilizer'
-  if (title.includes('Spray')) return 'spray'
-  return 'other'
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const VOICE_LANG_MAP: Record<'en' | 'hi' | 'mr', string> = {
+  en: 'en-IN',
+  hi: 'hi-IN',
+  mr: 'mr-IN',
 }
+const ALARM_CHECK_MS = 30_000
 
-function formatToday() {
+function formatToday(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+const defaultReminderForm = (): ReminderFormData => ({
+  title: '',
+  cropName: '',
+  notes: '',
+  reminderDate: formatToday(),
+  reminderTime: '09:00',
+  repeat: 'once' as ReminderRepeat,
+  type: 'irrigation' as ReminderCategory,
+  status: 'pending',
+})
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export function TrackerScreen() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  const langCode = normaliseLang(profile?.preferredLanguage) as 'en' | 'hi' | 'mr'
+
+  // ── Data ──────────────────────────────────────────────────────────────────
   const [activities, setActivities] = useState<ActivityRecord[]>([])
   const [reminders, setReminders] = useState<ReminderRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
 
-  const [openActivity, setOpenActivity] = useState(false)
-  const [editActivity, setEditActivity] = useState<ActivityRecord | null>(null)
-
-  const [preset, setPreset] = useState<string>(presets[0]!)
-  const [date, setDate] = useState(formatToday())
-  const [notes, setNotes] = useState('')
-  const [statusAdd, setStatusAdd] = useState<'pending' | 'done'>('pending')
-
-  const [openReminder, setOpenReminder] = useState(false)
+  // ── Forms ─────────────────────────────────────────────────────────────────
+  const [openReminderModal, setOpenReminderModal] = useState(false)
   const [editReminder, setEditReminder] = useState<ReminderRecord | null>(null)
-  const [remForm, setRemForm] = useState({
-    title: '',
-    description: '',
-    reminderDate: formatToday(),
-    reminderTime: '09:00',
-    type: 'field',
-    status: 'pending' as 'pending' | 'done',
-  })
+  const [reminderForm, setReminderForm] = useState<ReminderFormData>(defaultReminderForm())
 
+  // ── Alarm ─────────────────────────────────────────────────────────────────
+  // Store reminders in a ref so the alarm interval doesn't need it in deps
+  const remindersRef = useRef<ReminderRecord[]>([])
+  const triggeredIdsRef = useRef<Set<string>>(new Set())
+  const [alarmReminder, setAlarmReminder] = useState<ReminderRecord | null>(null)
+  const stopAlarmFnRef = useRef<(() => void) | null>(null)
+  const langCodeRef = useRef(langCode)
+
+  // Keep refs in sync
+  useEffect(() => { remindersRef.current = reminders }, [reminders])
+  useEffect(() => { langCodeRef.current = langCode }, [langCode])
+
+  // ── Notifications ─────────────────────────────────────────────────────────
+  const [notifPermission, setNotifPermission] = useState<string>(() => notificationPermission())
+
+  // -------------------------------------------------------------------------
+  // Request notification permission on mount (silently)
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (notifPermission === 'default') {
+      void requestNotificationPermission().then((r) => setNotifPermission(r))
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // -------------------------------------------------------------------------
+  // Data loading
+  // -------------------------------------------------------------------------
   const refresh = useCallback(async () => {
     if (!user) return
     setLoading(true)
     setError(null)
     try {
-      const [a, r] = await Promise.all([fetchActivitiesForUser(user.uid), fetchRemindersForUser(user.uid)])
+      const [a, r] = await Promise.all([
+        fetchActivitiesForUser(user.uid),
+        fetchRemindersForUser(user.uid),
+      ])
       setActivities(a)
       setReminders(r)
     } catch (e) {
       if (import.meta.env.DEV) console.error('[TrackerScreen] refresh failed', e)
-      setError(formatFirestoreError(e, 'load activities'))
+      setError(formatFirestoreError(e, 'load data'))
     } finally {
       setLoading(false)
     }
   }, [user])
 
+  useEffect(() => { void refresh() }, [refresh])
+
+  // -------------------------------------------------------------------------
+  // Stable alarm interval — uses refs, NOT state in deps
+  // -------------------------------------------------------------------------
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    const checkDue = () => {
+      const lang = langCodeRef.current
+      const due = remindersRef.current.filter(
+        (r) => isReminderDueNow(r) && !triggeredIdsRef.current.has(r.id),
+      )
+      if (due.length === 0) return
 
-  const sortedActivities = [...activities].sort((a, b) => (a.date < b.date ? 1 : -1))
+      const first = due[0]!
+      due.forEach((r) => triggeredIdsRef.current.add(r.id))
 
-  const saveNewActivity = async () => {
+      // Play beep alarm
+      const stopFn = playAlarmBeep()
+      stopAlarmFnRef.current = stopFn
+
+      // Browser notification
+      sendNotification(
+        '⏰ KrishiMitra Reminder',
+        buildVoiceMessage(first, lang),
+        { tag: first.id },
+      )
+
+      // Voice TTS
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel()
+        const msg = buildVoiceMessage(first, lang)
+        const utterance = new SpeechSynthesisUtterance(msg)
+        utterance.lang = VOICE_LANG_MAP[lang]
+        utterance.rate = lang === 'mr' ? 0.72 : lang === 'hi' ? 0.76 : 0.86
+        utterance.pitch = 1.05
+        window.speechSynthesis.speak(utterance)
+      }
+
+      setAlarmReminder(first)
+    }
+
+    // Check immediately, then every 30s
+    checkDue()
+    const id = window.setInterval(checkDue, ALARM_CHECK_MS)
+    return () => window.clearInterval(id)
+  }, []) // stable — uses refs only
+
+  // -------------------------------------------------------------------------
+  // Stop alarm
+  // -------------------------------------------------------------------------
+  const stopActiveAlarm = useCallback(() => {
+    stopAlarmFnRef.current?.()
+    stopAlarmFnRef.current = null
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    setAlarmReminder(null)
+    stopAlarm()
+  }, [])
+
+  // -------------------------------------------------------------------------
+  // Cleanup on unmount
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    return () => {
+      stopAlarm()
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    }
+  }, [])
+
+  // -------------------------------------------------------------------------
+  // Notifications button
+  // -------------------------------------------------------------------------
+  const handleEnableNotifications = useCallback(async () => {
+    const result = await requestNotificationPermission()
+    setNotifPermission(result)
+  }, [])
+
+  // -------------------------------------------------------------------------
+  // Reminder actions
+  // -------------------------------------------------------------------------
+  const saveReminder = useCallback(async () => {
     if (!user) return
-    try {
-      await addActivity({
-        userId: user.uid,
-        title: preset,
-        type: presetToType(preset),
-        date,
-        status: statusAdd,
-        notes,
-      })
-      setOpenActivity(false)
-      setNotes('')
-      setDate(formatToday())
-      await refresh()
-    } catch (e) {
-      if (import.meta.env.DEV) console.error('[TrackerScreen] add activity failed', e)
-      setError(formatFirestoreError(e, 'save activity'))
-    }
-  }
+    setIsSaving(true)
+    setError(null)
 
-  const saveEditActivity = async () => {
-    if (!editActivity || !user) return
-    try {
-      await updateActivity(user.uid, editActivity.id, {
-        title: editActivity.title,
-        type: editActivity.type,
-        date: editActivity.date,
-        status: editActivity.status,
-        notes: editActivity.notes,
-      })
-      setEditActivity(null)
-      await refresh()
-    } catch (e) {
-      if (import.meta.env.DEV) console.error('[TrackerScreen] update activity failed', e)
-      setError(formatFirestoreError(e, 'update activity'))
-    }
-  }
+    let { title, cropName, notes, reminderDate, reminderTime, repeat, type, status } = reminderForm
+    title = title.trim()
+    cropName = cropName.trim()
+    notes = notes.trim()
 
-  const removeActivity = async (id: string) => {
-    if (!confirm('Delete this activity?') || !user) return
-    try {
-      await deleteActivity(user.uid, id)
-      await refresh()
-    } catch (e) {
-      if (import.meta.env.DEV) console.error('[TrackerScreen] delete activity failed', e)
-      setError(formatFirestoreError(e, 'delete activity'))
-    }
-  }
-
-  const saveReminder = async () => {
-    if (!user) return
-    if (!editReminder && !remForm.title.trim()) {
+    if (!editReminder && !title) {
       setError('Please enter a reminder title.')
+      setIsSaving(false)
       return
     }
+
+    // Natural language parsing
+    if (
+      !editReminder &&
+      !notes &&
+      /tomorrow|today|watering|water|spray|fertilizer|harvest|soil|test|morning|evening|afternoon|night/i.test(title)
+    ) {
+      const parsed = parseNaturalReminder(title)
+      title = parsed.title
+      notes = parsed.notes
+      if (reminderDate === formatToday()) reminderDate = parsed.reminderDate
+      if (reminderTime === '09:00') reminderTime = parsed.reminderTime
+      if (type === 'other' || type === 'irrigation') type = parsed.type
+    }
+
+    // ── Optimistic: immediately show the new reminder in the list ──────────
+    if (!editReminder) {
+      const optimisticReminder: ReminderRecord = {
+        id: `optimistic-${Date.now()}`,
+        userId: user.uid,
+        title,
+        cropName,
+        notes,
+        reminderDate,
+        reminderTime,
+        repeat,
+        type,
+        status,
+        createdAt: new Date(),
+      }
+      setReminders((prev) => [optimisticReminder, ...prev])
+    }
+
+    setOpenReminderModal(false)
+    setEditReminder(null)
+    setReminderForm(defaultReminderForm())
+
     try {
       if (editReminder) {
         await updateReminder(user.uid, editReminder.id, {
-          title: remForm.title.trim(),
-          description: remForm.description.trim(),
-          reminderDate: remForm.reminderDate,
-          reminderTime: remForm.reminderTime,
-          type: remForm.type,
-          status: remForm.status,
+          title, cropName, notes, reminderDate, reminderTime, repeat, type, status,
         })
-        setEditReminder(null)
       } else {
         await addReminder({
           userId: user.uid,
-          title: remForm.title.trim(),
-          description: remForm.description.trim(),
-          reminderDate: remForm.reminderDate,
-          reminderTime: remForm.reminderTime,
-          type: remForm.type,
-          status: remForm.status,
+          title, cropName, notes, reminderDate, reminderTime, repeat, type, status,
         })
-        setOpenReminder(false)
       }
-      setRemForm({
-        title: '',
-        description: '',
-        reminderDate: formatToday(),
-        reminderTime: '09:00',
-        type: 'field',
-        status: 'pending',
-      })
+      // Refresh to get real IDs / server timestamps
       await refresh()
     } catch (e) {
       if (import.meta.env.DEV) console.error('[TrackerScreen] save reminder failed', e)
       setError(formatFirestoreError(e, 'save reminder'))
-    }
-  }
-
-  const removeReminder = async (id: string) => {
-    if (!confirm('Delete this reminder?') || !user) return
-    try {
-      await deleteReminder(user.uid, id)
+      // On error revert optimistic update
       await refresh()
-    } catch (e) {
-      if (import.meta.env.DEV) console.error('[TrackerScreen] delete reminder failed', e)
-      setError(formatFirestoreError(e, 'delete reminder'))
+    } finally {
+      setIsSaving(false)
     }
-  }
+  }, [editReminder, refresh, reminderForm, user])
 
-  const openEditReminder = (r: ReminderRecord) => {
-    setEditReminder(r)
-    setRemForm({
-      title: r.title,
-      description: r.description,
-      reminderDate: r.reminderDate,
-      reminderTime: r.reminderTime,
-      type: r.type,
-      status: r.status,
+  const removeReminder = useCallback(
+    async (id: string) => {
+      if (!confirm('Delete this reminder?') || !user) return
+      setError(null)
+      // Optimistic remove
+      setReminders((prev) => prev.filter((r) => r.id !== id))
+      try {
+        await deleteReminder(user.uid, id)
+      } catch (e) {
+        setError(formatFirestoreError(e, 'delete reminder'))
+        await refresh()
+      }
+    },
+    [refresh, user],
+  )
+
+  const markReminderDone = useCallback(
+    async (id: string) => {
+      if (!user) return
+      const reminder = reminders.find((r) => r.id === id)
+      if (!reminder) return
+      setError(null)
+      // Optimistic status change
+      setReminders((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, status: 'done' as const } : r)),
+      )
+      try {
+        await updateReminder(user.uid, id, { status: 'done' })
+        // Record as completed activity
+        await addActivity({
+          userId: user.uid,
+          title: `Completed: ${reminder.title}`,
+          type: 'reminder completed',
+          date: formatToday(),
+          status: 'done',
+          notes: [reminder.cropName, reminder.notes].filter(Boolean).join(' — ') || 'Reminder done',
+        })
+        await refresh()
+      } catch (e) {
+        setError(formatFirestoreError(e, 'update reminder'))
+        await refresh()
+      }
+    },
+    [refresh, reminders, user],
+  )
+
+  const openEditReminder = useCallback((rem: ReminderRecord) => {
+    setEditReminder(rem)
+    setReminderForm({
+      title: rem.title,
+      cropName: rem.cropName,
+      notes: rem.notes,
+      reminderDate: rem.reminderDate,
+      reminderTime: rem.reminderTime,
+      repeat: rem.repeat,
+      type: rem.type,
+      status: rem.status,
     })
-  }
+    setOpenReminderModal(true)
+  }, [])
 
+  const closeReminderModal = useCallback(() => {
+    setOpenReminderModal(false)
+    setEditReminder(null)
+    setReminderForm(defaultReminderForm())
+    setError(null)
+  }, [])
+
+  // Completed reminders for history section
+  const completedReminders = reminders.filter((r) => r.status === 'done')
+
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
   return (
-    <div className="space-y-6 pb-28">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Activity tracker</h2>
-          <p className="mt-1 text-sm text-slate-600">Synced with your Firebase account.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setOpenActivity(true)}
-          title="Add activity"
-          aria-label="Add activity"
-          className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-green-600 text-white shadow-lg shadow-green-900/15 transition duration-200 ease-out hover:scale-105 hover:bg-green-700 active:scale-[0.99] sm:self-auto"
-        >
-          <PlusCircle className="h-7 w-7" strokeWidth={2} aria-hidden />
-        </button>
-      </div>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="space-y-6 pb-28"
+    >
+      {/* ── Header ── */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-3xl border border-green-100 bg-gradient-to-r from-green-50 to-emerald-50 p-5"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600 shadow-lg shadow-green-900/20">
+              <TrendingUp className="h-6 w-6 text-white" strokeWidth={2} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-slate-900">Farming Tracker</h2>
+              <p className="text-sm text-slate-500">
+                {reminders.length} reminders · {completedReminders.length} done
+              </p>
+            </div>
+          </div>
 
-      {error && (
-        <p className="rounded-2xl bg-red-50 px-4 py-2 text-sm font-medium text-red-800 ring-1 ring-red-100">{error}</p>
-      )}
-
-      <section className="rounded-3xl border border-green-100 bg-white p-4 shadow-md shadow-green-900/5">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="flex items-center gap-2 text-lg font-bold text-slate-900">
-            <Clock className="h-6 w-6 text-green-600 transition duration-200 ease-out hover:scale-105 hover:text-green-700" strokeWidth={2} />
-            Reminders
-          </h3>
+          {/* Add reminder button in header */}
           <button
             type="button"
             onClick={() => {
               setEditReminder(null)
-              setRemForm({
-                title: '',
-                description: '',
-                reminderDate: formatToday(),
-                reminderTime: '09:00',
-                type: 'field',
-                status: 'pending',
-              })
-              setOpenReminder(true)
+              setReminderForm(defaultReminderForm())
+              setOpenReminderModal(true)
             }}
             title="Add reminder"
             aria-label="Add reminder"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-green-700 transition duration-200 ease-out hover:scale-105 hover:bg-green-100 hover:text-green-900"
+            className="group inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-white shadow-lg shadow-green-900/20 transition hover:scale-110 active:scale-95"
           >
-            <PlusCircle className="h-6 w-6" strokeWidth={2} aria-hidden />
+            <PlusCircle className="h-6 w-6 transition group-hover:rotate-90" strokeWidth={2} />
           </button>
         </div>
-        {loading ? (
-          <p className="mt-3 text-sm text-slate-500">Loading…</p>
-        ) : reminders.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-600">No reminders yet.</p>
-        ) : (
-          <ul className="mt-3 space-y-3">
-            {reminders.map((r) => (
-              <li
-                key={r.id}
-                className="flex flex-wrap items-start justify-between gap-2 rounded-2xl bg-green-50 px-4 py-3 ring-1 ring-green-100"
-              >
-                <div className="min-w-0 flex-1 text-left">
-                  <p className="font-medium text-slate-900">{r.title}</p>
-                  <p className="mt-0.5 text-xs text-slate-600">{r.description}</p>
-                  <p className="mt-1 text-sm font-semibold text-green-800">
-                    {r.reminderDate} · {r.reminderTime}
-                  </p>
-                </div>
-                <div className="flex shrink-0 gap-1">
-                  <button
-                    type="button"
-                    title="Edit reminder"
-                    aria-label="Edit reminder"
-                    onClick={() => openEditReminder(r)}
-                    className="rounded-full p-2 text-green-800 transition duration-200 ease-out hover:scale-105 hover:bg-green-100 hover:text-green-900"
-                  >
-                    <Pencil className="h-5 w-5" strokeWidth={2} />
-                  </button>
-                  <button
-                    type="button"
-                    title="Delete reminder"
-                    aria-label="Delete reminder"
-                    onClick={() => void removeReminder(r.id)}
-                    className="rounded-full p-2 text-red-700 transition duration-200 ease-out hover:scale-105 hover:bg-red-50 hover:text-red-800"
-                  >
-                    <Trash2 className="h-5 w-5" strokeWidth={2} />
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
 
-      <section>
-        <h3 className="px-1 text-lg font-bold text-slate-900">Your activities</h3>
-        {loading ? (
-          <p className="mt-3 text-sm text-slate-500">Loading…</p>
-        ) : sortedActivities.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-600">No activities logged yet.</p>
-        ) : (
-          <div className="mt-3 space-y-3">
-            {sortedActivities.map((a, i) => (
-              <motion.div
-                key={a.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.03 }}
-                className="flex items-start justify-between gap-2 rounded-3xl border border-green-100 bg-white p-4 shadow-sm"
-              >
-                <div className="min-w-0 flex-1 text-left">
-                  <p className="font-semibold text-slate-900">{a.title}</p>
-                  <p className="mt-1 text-sm text-slate-500">{a.date}</p>
-                  {a.notes ? <p className="mt-1 text-sm text-slate-600">{a.notes}</p> : null}
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-bold ${
-                      a.status === 'done'
-                        ? 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200'
-                        : 'bg-amber-100 text-amber-900 ring-1 ring-amber-200'
-                    }`}
-                  >
-                    {a.status === 'done' ? (
-                      <CheckCircle className="h-5 w-5" strokeWidth={2} aria-hidden />
-                    ) : (
-                      <Clock className="h-5 w-5" strokeWidth={2} aria-hidden />
-                    )}
-                    {a.status === 'done' ? 'Done' : 'Pending'}
-                  </span>
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      title="Edit activity"
-                      aria-label="Edit activity"
-                      onClick={() => setEditActivity({ ...a })}
-                      className="rounded-full p-2 text-green-800 transition duration-200 ease-out hover:scale-105 hover:bg-green-50 hover:text-green-900"
-                    >
-                      <Pencil className="h-5 w-5" strokeWidth={2} />
-                    </button>
-                    <button
-                      type="button"
-                      title="Delete activity"
-                      aria-label="Delete activity"
-                      onClick={() => void removeActivity(a.id)}
-                      className="rounded-full p-2 text-red-700 transition duration-200 ease-out hover:scale-105 hover:bg-red-50 hover:text-red-800"
-                    >
-                      <Trash2 className="h-5 w-5" strokeWidth={2} />
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <AnimatePresence>
-        {openActivity && (
-          <ModalWrap onClose={() => setOpenActivity(false)} title="Add activity">
-            <label className="mt-2 block text-sm font-semibold text-slate-700">Activity</label>
-            <select
-              value={preset}
-              onChange={(e) => setPreset(e.target.value)}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base font-medium text-slate-900 outline-none focus:ring-2 focus:ring-green-500"
-            >
-              {presets.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Date</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base font-medium text-slate-900 outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Status</label>
-            <select
-              value={statusAdd}
-              onChange={(e) => setStatusAdd(e.target.value as 'pending' | 'done')}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            >
-              <option value="pending">Pending</option>
-              <option value="done">Done</option>
-            </select>
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Notes</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className="mt-2 w-full resize-none rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none focus:ring-2 focus:ring-green-500"
-              placeholder="Optional notes"
-            />
-            <button
-              type="button"
-              onClick={() => void saveNewActivity()}
-              className="mt-5 w-full rounded-2xl bg-green-600 py-3 text-base font-semibold text-white shadow-md transition hover:bg-green-700"
-            >
-              Save activity
-            </button>
-          </ModalWrap>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {editActivity && (
-          <ModalWrap onClose={() => setEditActivity(null)} title="Edit activity">
-            <label className="mt-2 block text-sm font-semibold text-slate-700">Title</label>
-            <input
-              value={editActivity.title}
-              onChange={(e) => setEditActivity({ ...editActivity, title: e.target.value })}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Type</label>
-            <input
-              value={editActivity.type}
-              onChange={(e) => setEditActivity({ ...editActivity, type: e.target.value })}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Date</label>
-            <input
-              type="date"
-              value={editActivity.date}
-              onChange={(e) => setEditActivity({ ...editActivity, date: e.target.value })}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Status</label>
-            <select
-              value={editActivity.status}
-              onChange={(e) =>
-                setEditActivity({ ...editActivity, status: e.target.value as 'done' | 'pending' })
-              }
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            >
-              <option value="pending">Pending</option>
-              <option value="done">Done</option>
-            </select>
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Notes</label>
-            <textarea
-              value={editActivity.notes}
-              onChange={(e) => setEditActivity({ ...editActivity, notes: e.target.value })}
-              rows={2}
-              className="mt-2 w-full resize-none rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <button
-              type="button"
-              onClick={() => void saveEditActivity()}
-              className="mt-5 w-full rounded-2xl bg-green-600 py-3 text-base font-semibold text-white shadow-md transition hover:bg-green-700"
-            >
-              Update activity
-            </button>
-          </ModalWrap>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {(openReminder || editReminder) && (
-          <ModalWrap
-            onClose={() => {
-              setOpenReminder(false)
-              setEditReminder(null)
-            }}
-            title={editReminder ? 'Edit reminder' : 'Add reminder'}
+        {/* Notification status strip */}
+        {notifPermission === 'default' && (
+          <button
+            type="button"
+            onClick={() => void handleEnableNotifications()}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 py-2.5 text-sm font-bold text-white transition hover:from-amber-500 hover:to-orange-500"
           >
-            <label className="mt-2 block text-sm font-semibold text-slate-700">Title</label>
-            <input
-              value={remForm.title}
-              onChange={(e) => setRemForm((f) => ({ ...f, title: e.target.value }))}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-              required
-            />
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Description</label>
-            <textarea
-              value={remForm.description}
-              onChange={(e) => setRemForm((f) => ({ ...f, description: e.target.value }))}
-              rows={2}
-              className="mt-2 w-full resize-none rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">Date</label>
-                <input
-                  type="date"
-                  value={remForm.reminderDate}
-                  onChange={(e) => setRemForm((f) => ({ ...f, reminderDate: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">Time</label>
-                <input
-                  type="time"
-                  value={remForm.reminderTime}
-                  onChange={(e) => setRemForm((f) => ({ ...f, reminderTime: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-            </div>
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Type</label>
-            <input
-              value={remForm.type}
-              onChange={(e) => setRemForm((f) => ({ ...f, type: e.target.value }))}
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-              placeholder="e.g. irrigation, soil"
-            />
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Status</label>
-            <select
-              value={remForm.status}
-              onChange={(e) =>
-                setRemForm((f) => ({ ...f, status: e.target.value as 'pending' | 'done' }))
-              }
-              className="mt-2 w-full rounded-2xl border border-green-100 bg-slate-50 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-green-500"
-            >
-              <option value="pending">Pending</option>
-              <option value="done">Done</option>
-            </select>
-            <button
-              type="button"
-              onClick={() => void saveReminder()}
-              className="mt-5 w-full rounded-2xl bg-green-600 py-3 text-base font-semibold text-white shadow-md transition hover:bg-green-700"
-            >
-              {editReminder ? 'Save reminder' : 'Add reminder'}
-            </button>
-          </ModalWrap>
+            <Bell className="h-4 w-4" strokeWidth={2} />
+            Enable Reminder Notifications
+          </button>
         )}
-      </AnimatePresence>
-    </div>
+        {notifPermission === 'denied' && (
+          <p className="mt-2 flex items-center gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-100">
+            <BellOff className="h-3.5 w-3.5 shrink-0" />
+            Notifications blocked — in-app alarm will still work
+          </p>
+        )}
+        {canNotify() && (
+          <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-green-700">
+            <Bell className="h-3.5 w-3.5" strokeWidth={2} />
+            Notifications enabled ✓
+          </p>
+        )}
+      </motion.div>
+
+      {/* ── Error Banner ── */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex gap-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-800 ring-1 ring-red-100"
+        >
+          <span className="text-lg">⚠️</span>
+          <p className="flex-1 font-semibold">{error}</p>
+          <button type="button" onClick={() => setError(null)} className="text-red-400 hover:text-red-600">
+            <X className="h-4 w-4" />
+          </button>
+        </motion.div>
+      )}
+
+      {/* ── Loading skeleton ── */}
+      {loading ? (
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-24 animate-pulse rounded-2xl bg-slate-100" />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {/* Reminders */}
+          <ReminderCards
+            reminders={reminders}
+            loading={false}
+            onEdit={openEditReminder}
+            onDelete={removeReminder}
+            onMarkDone={markReminderDone}
+          />
+
+          {/* Weekly completion graph */}
+          <ReminderGraph reminders={reminders} />
+
+          {/* Completed reminder history */}
+          <ReminderHistory completedReminders={completedReminders} activities={activities} onDeleteActivity={(id) => {
+            void deleteActivity(user!.uid, id).then(() => refresh())
+          }} />
+        </div>
+      )}
+
+      {/* ── Floating Add Reminder FAB ── */}
+      <motion.button
+        type="button"
+        onClick={() => {
+          setEditReminder(null)
+          setReminderForm(defaultReminderForm())
+          setOpenReminderModal(true)
+        }}
+        className="fixed bottom-24 right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-600 text-white shadow-xl shadow-green-900/30 transition sm:bottom-8 sm:right-8"
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.95 }}
+        title="Add reminder"
+        aria-label="Add reminder"
+      >
+        <Clock className="h-6 w-6" strokeWidth={2} />
+      </motion.button>
+
+      {/* ── Reminder Modal ── */}
+      <PremiumReminderModal
+        isOpen={openReminderModal || !!editReminder}
+        onClose={closeReminderModal}
+        onSave={saveReminder}
+        title={editReminder ? 'Edit Reminder' : 'New Reminder'}
+        formData={reminderForm}
+        onFormChange={(updates) => setReminderForm((prev) => ({ ...prev, ...updates }))}
+        isLoading={isSaving}
+        error={error}
+        isEditing={!!editReminder}
+        lang={langCode}
+      />
+
+      {/* ── Alarm Popup ── */}
+      {alarmReminder && (
+        <AlarmPopup
+          reminder={alarmReminder}
+          onStop={stopActiveAlarm}
+          onMarkDone={(id) => {
+            void markReminderDone(id)
+            stopActiveAlarm()
+          }}
+        />
+      )}
+    </motion.div>
   )
 }
 
+// ---------------------------------------------------------------------------
+// ModalWrap (kept for potential future use)
+// ---------------------------------------------------------------------------
 function ModalWrap({
   title,
   children,
@@ -568,7 +560,7 @@ function ModalWrap({
             type="button"
             title="Close"
             aria-label="Close"
-            className="rounded-full p-2 text-slate-500 transition duration-200 ease-out hover:scale-105 hover:bg-slate-100 hover:text-slate-800"
+            className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
             onClick={onClose}
           >
             <X className="h-6 w-6" strokeWidth={2} />
@@ -579,3 +571,6 @@ function ModalWrap({
     </motion.div>
   )
 }
+
+// Suppress unused warning — ModalWrap kept for future activity log forms
+void ModalWrap
