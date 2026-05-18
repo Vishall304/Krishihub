@@ -32,7 +32,7 @@ export function TopNav({
           </span>
 
           <span className="hidden text-sm font-medium text-slate-500 sm:inline">
-            · कृषि मित्र
+            
           </span>
         </div>
 
